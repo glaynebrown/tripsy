@@ -311,8 +311,8 @@
 
   function route() {
     const h = location.hash.replace(/^#\/?/, '');
-    const [name, arg] = h.split('/');
-    return { name: name || 'trips', arg: arg ? decodeURIComponent(arg) : '' };
+    const [name, arg, sub] = h.split('/');
+    return { name: name || 'trips', arg: arg ? decodeURIComponent(arg) : '', sub: sub || '' };
   }
 
   function applyPageLook() {
@@ -335,7 +335,8 @@
     const r = route();
     renderTabs(r.name);
     const screens = { trips: viewTrips, t: viewTrip, someday: viewSomeday, settings: viewSettings, join: viewJoin };
-    (screens[r.name] || viewTrips)(r.arg);
+    view.onclick = null;
+    (screens[r.name] || viewTrips)(r.arg, r.sub);
     document.body.classList.toggle('has-fab', !!$('#add'));
     renderBanner();
   }
@@ -467,7 +468,7 @@
         <div class="trip-when">${esc(when)}</div>
         <div class="trip-foot">
           <span class="avs">${t.members.slice(0, 5).map(m => avatar(t, m)).join('')}${t.members.length > 5 ? `<span class="av more">+${t.members.length - 5}</span>` : ''}</span>
-          <span class="trip-count">${ideas.length} idea${ideas.length === 1 ? '' : 's'}${musts ? ` · ${musts} must-do${musts === 1 ? '' : 's'}` : ''}</span>
+          <span class="trip-count">${ideas.length} idea${ideas.length === 1 ? '' : 's'}${musts ? ` · ${musts} must-do${musts === 1 ? '' : 's'}` : ''}${myOpenTodos(t).length ? `<span class="todo-badge">✅ ${myOpenTodos(t).length}</span>` : ''}</span>
         </div>
       </div>
     </a>`;
@@ -606,8 +607,9 @@
   }
 
   // ---------- one trip ----------
-  function viewTrip(tid) {
+  function viewTrip(tid, sub) {
     const t = tripById(tid);
+    if (t && sub === 'todo') return viewTodos(t);
     if (!t) {
       view.innerHTML = `<a class="back" href="#/trips">${icon('back')} Trips</a><div class="empty"><h2>Trip not found</h2><p>You may have left it, or it was deleted.</p></div>`;
       return;
@@ -640,6 +642,7 @@
             <span>${t.members.length === 1 ? 'Just you so far' : t.members.length + ' going'}</span>
             ${edit ? '' : '<span class="tag">View only</span>'}
           </button>
+          <div class="hero-pills"><a class="pill" href="#/t/${esc(t.id)}/todo">✅ ${todoLabel(t)}</a></div>
         </div>
       </section>
       ${t.look && (S.profile.keepMine || {})[t.id] ? `<p class="look-note">${icon('palette')} You’re seeing your own look here. <button class="linkbtn" id="use-look">Use the trip’s look</button></p>` : ''}
@@ -700,7 +703,7 @@
     return `<button class="idea" data-idea="${esc(i.id)}">
       ${i.photo ? `<img class="idea-photo" src="${esc(i.photo)}" alt="" loading="lazy">` : `<div class="idea-photo none">${c.emoji}</div>`}
       <div class="idea-body">
-        <div class="idea-tags"><span class="tag">${c.emoji} ${esc(c.name)}</span>${i.must ? '<span class="tag must">💖 Must-do</span>' : ''}${days.length ? `<span class="tag day">📅 Day${days.length > 1 ? 's' : ''} ${days.join(', ')}</span>` : ''}</div>
+        <div class="idea-tags"><span class="tag">${c.emoji} ${esc(c.name)}</span>${i.must ? '<span class="tag must">💖 Must-do</span>' : ''}${days.length ? `<span class="tag planned">📅 Day${days.length > 1 ? 's' : ''} ${days.join(', ')}</span>` : ''}</div>
         <div class="idea-name">${esc(i.name)}</div>
         ${i.where ? `<div class="idea-where">${icon('pin')}${esc(i.where)}</div>` : ''}
         ${i.notes ? `<div class="idea-notes">${esc(i.notes)}</div>` : ''}
@@ -1208,6 +1211,206 @@
     if (!used.size) return '';
     return `<label class="map-day">${icon('calendar')}<select id="map-day" aria-label="Show a day">
       <option value="">All days</option>${days.filter(d => used.has(d)).map(d => `<option value="${d}" ${ui.day === d ? 'selected' : ''}>Day ${days.indexOf(d) + 1} · ${esc(dayLabel(d))}</option>`).join('')}</select></label>`;
+  }
+
+  // ---------- to-dos ----------
+  const STARTER = [
+    { title: 'Passport valid 6+ months after the trip', before: 90 },
+    { title: 'Check if you need a visa', before: 90 },
+    { title: 'International driver’s permit (if you’ll drive)', before: 30 },
+    { title: 'Phone plan or eSIM for abroad', before: 7 },
+    { title: 'Outlet adapter', before: 7 },
+    { title: 'Tell your bank + cards you’re traveling', before: 7 },
+    { title: 'Photo of your passport saved on your phone', before: 3 },
+  ];
+  const todayIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  function addDays(iso, n) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10);
+  }
+  // the real due date: a set date, or "N days before the trip" once it has dates
+  const dueOf = (t, x) => x.due || (x.before != null && t.start ? addDays(t.start, -x.before) : '');
+  const todoFor = (t, x) => (x.for && x.for !== 'all' ? (t.members.includes(x.for) ? [x.for] : []) : t.members);
+  const doneBy = (t, x) => todoFor(t, x).filter(u => x.done && x.done[u]);
+  const allDone = (t, x) => { const w = todoFor(t, x); return w.length > 0 && doneBy(t, x).length === w.length; };
+  const myOpenTodos = t => (S.todos[t.id] || []).filter(x => todoFor(t, x).includes(S.me) && !(x.done && x.done[S.me]));
+  function todoLabel(t) {
+    const n = myOpenTodos(t).length;
+    return n ? `${n} to-do${n === 1 ? '' : 's'}` : 'To-dos';
+  }
+  function beforeText(days) {
+    if (days == null) return '';
+    if (days % 30 === 0 && days >= 30) return `${days / 30} month${days === 30 ? '' : 's'} before`;
+    if (days % 7 === 0 && days >= 7) return `${days / 7} week${days === 7 ? '' : 's'} before`;
+    return `${days} day${days === 1 ? '' : 's'} before`;
+  }
+  function dueChip(t, x) {
+    const due = dueOf(t, x);
+    if (!due) return x.before != null ? `<span class="due">${esc(beforeText(x.before))} the trip</span>` : '';
+    const today = todayIso();
+    const [y, m, d] = due.split('-').map(Number);
+    const days = Math.round((Date.UTC(y, m - 1, d) - Date.UTC(...today.split('-').map((v, i) => (i === 1 ? v - 1 : +v)))) / 86400000);
+    const when = `${MON[m - 1]} ${d}${y !== new Date().getFullYear() ? ', ' + y : ''}`;
+    if (allDone(t, x)) return `<span class="due">${esc(when)}</span>`;
+    if (days < 0) return `<span class="due late">Overdue · ${esc(when)}</span>`;
+    if (days === 0) return `<span class="due soon">Due today</span>`;
+    if (days <= 14) return `<span class="due soon">In ${days} day${days === 1 ? '' : 's'} · ${esc(when)}</span>`;
+    return `<span class="due">Due ${esc(when)}</span>`;
+  }
+  function sortTodos(t, list) {
+    return list.slice().sort((a, b) => {
+      const A = dueOf(t, a) || '9999', B = dueOf(t, b) || '9999';
+      return A < B ? -1 : A > B ? 1 : (a.createdAt || 0) - (b.createdAt || 0);
+    });
+  }
+
+  function viewTodos(t) {
+    const edit = canEdit(t);
+    const all = S.todos[t.id] || [];
+    const mine = ui.todoMine;
+    const visible = mine ? all.filter(x => todoFor(t, x).includes(S.me)) : all;
+    const open = sortTodos(t, visible.filter(x => mine ? !(x.done && x.done[S.me]) : !allDone(t, x)));
+    const done = sortTodos(t, visible.filter(x => !open.includes(x)));
+    const row = x => {
+      const who = todoFor(t, x);
+      const forMe = who.includes(S.me);
+      const meDone = !!(x.done && x.done[S.me]);
+      const got = doneBy(t, x);
+      return `<div class="todo ${allDone(t, x) || (mine && meDone) ? 'is-done' : ''}" data-todo="${esc(x.id)}">
+        ${forMe ? `<button class="todo-check ${meDone ? 'on' : ''}" data-check="${esc(x.id)}" aria-label="${meDone ? 'Mark not done' : 'Mark done'}">${icon('check')}</button>` : '<span class="todo-check off" aria-hidden="true"></span>'}
+        <div class="todo-main">
+          <b>${esc(x.title)}</b>
+          <div class="todo-meta">
+            ${x.for && x.for !== 'all' ? `<span class="todo-for">${avatar(t, x.for, 'tiny')} ${x.for === S.me ? 'Just you' : esc(nameIn(t, x.for))}</span>`
+              : `<span class="todo-for">${who.length > 1 ? `${got.length} of ${who.length} done` : 'Everyone'}${got.length ? ` <span class="avs mini">${got.slice(0, 5).map(u => avatar(t, u, 'tiny')).join('')}</span>` : ''}</span>`}
+            ${dueChip(t, x)}
+          </div>
+          ${x.notes ? `<small class="todo-notes">${esc(x.notes)}</small>` : ''}
+        </div>
+      </div>`;
+    };
+    view.innerHTML = `<div class="back-row"><a class="back" href="#/t/${esc(t.id)}">${icon('back')} ${esc(t.name)}</a>
+        ${edit ? `<button class="plus-btn small" id="todo-add" aria-label="Add a to-do">${icon('plus')}</button>` : ''}</div>
+      <div class="page-head tight-head"><div><h1>To-dos ✅</h1><p class="sub">Things to get done before you go.</p></div></div>
+      ${all.length ? `<div class="seg mode todo-filter"><button class="${!mine ? 'on' : ''}" data-tf="all">Everything</button><button class="${mine ? 'on' : ''}" data-tf="mine">Just mine</button></div>
+        <div class="todos">${open.map(row).join('') || `<p class="empty small">${mine ? 'You’re all caught up ✨' : 'Everything’s done ✨'}</p>`}</div>
+        ${done.length ? `<details class="done-box" ${ui.showDone ? 'open' : ''}><summary>Done (${done.length})</summary><div class="todos">${done.map(row).join('')}</div></details>` : ''}`
+      : `<div class="empty"><div class="empty-emoji">✅</div><h2>Nothing to do yet</h2>
+          <p>Add things like booking tours or getting a visa — for everyone, or for one person.</p></div>`}
+      ${edit ? `<button class="btn ghost wide starter-btn" id="starter">${icon('sparkle')} Add the international starter list</button>` : ''}`;
+    view.querySelectorAll('[data-tf]').forEach(b => b.onclick = () => { ui.todoMine = b.dataset.tf === 'mine'; render(); });
+    const box = view.querySelector('.done-box');
+    if (box) box.ontoggle = () => { ui.showDone = box.open; };
+    view.onclick = async e => {
+      const c = e.target.closest('[data-check]');
+      if (c) {
+        e.stopPropagation();
+        const x = all.find(y => y.id === c.dataset.check);
+        const on = !(x.done && x.done[S.me]);
+        c.classList.toggle('on', on);
+        try { await API.checkTodo(t.id, x.id, on); if (on) toast('Done ✨'); } catch (err) { oops(err); }
+        return;
+      }
+      const r = e.target.closest('[data-todo]');
+      if (r) todoSheet(t, all.find(y => y.id === r.dataset.todo));
+    };
+    if ($('#todo-add')) $('#todo-add').onclick = () => todoSheet(t, null);
+    if ($('#starter')) $('#starter').onclick = () => starterSheet(t);
+  }
+
+  function todoSheet(t, x) {
+    const edit = canEdit(t);
+    const isNew = !x;
+    const d = { title: '', notes: '', for: 'all', due: '', before: null, ...(x || {}) };
+    let when = d.due ? 'date' : d.before != null ? 'before' : 'none';
+    let n = d.before != null ? d.before : 14, unit = 'days';
+    if (d.before && d.before % 30 === 0) { n = d.before / 30; unit = 'months'; } else if (d.before && d.before % 7 === 0) { n = d.before / 7; unit = 'weeks'; }
+    if (!edit) {
+      openSheet(`<div class="sheet-head"><h2>${esc(d.title)}</h2><button class="btn quiet" data-act="close">Close</button></div>
+        <div class="todo-meta">${dueChip(t, d)}</div>${d.notes ? `<p class="detail-notes">${esc(d.notes)}</p>` : ''}
+        <p class="hint">${d.for === 'all' ? 'For everyone on the trip' : 'For ' + esc(nameIn(t, d.for))}</p>`);
+      return;
+    }
+    const people = t.members.slice().sort((a, b) => (a === S.me ? -1 : b === S.me ? 1 : nameIn(t, a).localeCompare(nameIn(t, b))));
+    const draw = () => {
+      openSheet(`<div class="sheet-head"><h2>${isNew ? 'New to-do' : 'Edit to-do'}</h2><button class="btn quiet" data-act="close">Cancel</button></div>
+        <div class="field"><input class="input" id="td-title" value="${esc(d.title)}" placeholder="Book the boat tour, get a visa…" aria-label="To-do"></div>
+        <div class="field"><div class="label">Who’s it for?</div>
+          <div class="check-chips">
+            <button type="button" class="chip ${d.for === 'all' ? 'on' : ''}" data-for="all">Everyone</button>
+            ${people.map(u => `<button type="button" class="chip ${d.for === u ? 'on' : ''}" data-for="${esc(u)}">${avatar(t, u, 'tiny')} ${u === S.me ? 'Me' : esc(nameIn(t, u))}</button>`).join('')}
+          </div>
+          ${d.for === 'all' && t.members.length > 1 ? '<p class="hint">Everyone checks it off on their own.</p>' : ''}</div>
+        <div class="field"><div class="label">When</div>
+          <div class="seg wide"><button class="${when === 'none' ? 'on' : ''}" data-when="none">No date</button><button class="${when === 'date' ? 'on' : ''}" data-when="date">On a date</button><button class="${when === 'before' ? 'on' : ''}" data-when="before">Before the trip</button></div>
+          ${when === 'date' ? `<input class="input" type="date" id="td-due" value="${esc(d.due)}">` : ''}
+          ${when === 'before' ? `<div class="row before-row"><input class="input" type="number" inputmode="numeric" min="1" max="365" id="td-n" value="${n}"><select class="input" id="td-unit">${['days', 'weeks', 'months'].map(u => `<option ${u === unit ? 'selected' : ''}>${u}</option>`).join('')}</select><span>before</span></div>
+            <p class="hint">${t.start ? 'That’s ' + esc(dateRange(addDays(t.start, -beforeDays()))) + '.' : 'Turns into a real date once the trip has dates.'}</p>` : ''}
+        </div>
+        <textarea class="input notes" id="td-notes" placeholder="Notes (optional)">${esc(d.notes)}</textarea>
+        <div class="sheet-foot"><button class="btn wide" id="td-save">${isNew ? 'Add to-do' : 'Save'}</button>${isNew ? '' : '<button class="btn danger" id="td-del">Delete</button>'}</div>`, onClick);
+      sheet.oninput = e => {
+        if (e.target.id === 'td-n' || e.target.id === 'td-unit') {
+          grab();
+          const h = e.target.closest('.field').querySelector('.hint');
+          if (h && t.start) h.textContent = 'That’s ' + dateRange(addDays(t.start, -beforeDays())) + '.';
+        }
+      };
+      sheet.onchange = sheet.oninput;
+    };
+    function beforeDays() { const k = { days: 1, weeks: 7, months: 30 }[unit] || 1; return Math.max(1, Math.round((+n || 1) * k)); }
+    const grab = () => {
+      d.title = $('#td-title').value; d.notes = $('#td-notes').value;
+      if ($('#td-due')) d.due = $('#td-due').value;
+      if ($('#td-n')) { n = $('#td-n').value; unit = $('#td-unit').value; }
+    };
+    async function onClick(e) {
+      const f = e.target.closest('[data-for]');
+      if (f) { grab(); d.for = f.dataset.for; draw(); return; }
+      const w = e.target.closest('[data-when]');
+      if (w) { grab(); when = w.dataset.when; draw(); return; }
+      if (e.target.closest('#td-del')) {
+        if (!(await ask('Delete this to-do?', '', 'Delete', { danger: true }))) return;
+        try { await API.deleteTodo(t.id, x.id); closeSheet(); } catch (err) { oops(err); }
+        return;
+      }
+      if (!e.target.closest('#td-save')) return;
+      grab();
+      if (!d.title.trim()) { $('#td-title').focus(); return toast('Write the to-do.'); }
+      if (when === 'date' && !d.due) return toast('Pick a date, or choose “No date.”');
+      const out = { title: d.title.trim(), notes: d.notes.trim(), for: d.for, due: when === 'date' ? d.due : '', before: when === 'before' ? beforeDays() : null };
+      if (x) out.id = x.id;
+      e.target.disabled = true;
+      try { await API.saveTodo(t.id, out); closeSheet(); toast(isNew ? 'Added ✅' : 'Saved'); } catch (err) { e.target.disabled = false; oops(err); }
+    }
+    draw();
+    if (isNew) setTimeout(() => { const i = $('#td-title'); if (i) i.focus(); }, 250);
+  }
+
+  function starterSheet(t) {
+    const have = new Set((S.todos[t.id] || []).map(x => x.title.toLowerCase()));
+    const picked = new Set(STARTER.map((x, i) => i).filter(i => !have.has(STARTER[i].title.toLowerCase())));
+    openSheet(`<div class="sheet-head"><h2>Starter list ✨</h2><button class="btn quiet" data-act="close">Cancel</button></div>
+      <p class="hint" style="margin-top:-6px">The usual things for a trip abroad, for everyone. Untick any you don’t need.</p>
+      <div class="pick-list">${STARTER.map((x, i) => `<label class="pick ${picked.has(i) ? 'on' : ''}"><input type="checkbox" data-st="${i}" ${picked.has(i) ? 'checked' : ''}>
+        <span class="pick-main"><b>${esc(x.title)}</b><small>${have.has(x.title.toLowerCase()) ? 'Already on your list' : esc(beforeText(x.before)) + ' the trip'}</small></span>
+        <span class="pick-box">${icon('check')}</span></label>`).join('')}</div>
+      <div class="sheet-foot"><button class="btn wide" id="st-go">Add ${picked.size} to-dos</button></div>`, async e => {
+      if (!e.target.closest('#st-go')) return;
+      if (!picked.size) return toast('Tick the ones you want.');
+      e.target.disabled = true;
+      try {
+        await API.addTodos(t.id, STARTER.filter((x, i) => picked.has(i)).map(x => ({ title: x.title, notes: '', for: 'all', due: '', before: x.before })));
+        closeSheet(); toast('Added ✅');
+      } catch (err) { e.target.disabled = false; oops(err); }
+    });
+    sheet.onchange = e => {
+      const i = e.target.dataset.st;
+      if (i === undefined) return;
+      if (e.target.checked) picked.add(+i); else picked.delete(+i);
+      e.target.closest('.pick').classList.toggle('on', e.target.checked);
+      $('#st-go').textContent = `Add ${picked.size} to-do${picked.size === 1 ? '' : 's'}`;
+    };
   }
 
   // ---------- people + invites ----------

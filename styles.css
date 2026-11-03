@@ -532,7 +532,7 @@ input[type="date"].input::-webkit-date-and-time-value { text-align: left; }
 
 /* ---------- Plan ---------- */
 @media (max-width: 420px) { .seg.mode.three .icon { display: none; } .seg.mode.three button { padding: 6px 10px; } }
-.tag.day { background: color-mix(in srgb, var(--accent) 18%, var(--card)); color: var(--deep); }
+.tag.planned { background: color-mix(in srgb, var(--accent) 18%, var(--card)); color: var(--deep); }
 .plan { display: grid; gap: 14px; padding-bottom: 20px; }
 .day { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 14px 10px; box-shadow: var(--shadow); }
 .day.off { background: var(--softer); box-shadow: none; }
@@ -587,3 +587,42 @@ input[type="date"].input::-webkit-date-and-time-value { text-align: left; }
 .slot-head + .plan-list:not(:has(.stop)) { min-height: 0; padding: 0; }
 .sorting .slot-head + .plan-list:not(:has(.stop)) { min-height: 40px; }
 .slot-head ~ .slot-head { border-top: 1px dashed var(--line); padding-top: 6px; }
+
+/* ---------- to-dos ---------- */
+.hero-pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.pill { display: inline-flex; align-items: center; gap: 5px; padding: 7px 13px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); color: var(--deep); font-weight: 700; font-size: 14px; text-decoration: none; box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 6%, transparent); }
+.todo-badge { margin-left: 6px; color: var(--deep); }
+.plus-btn.small { width: 38px; height: 38px; }
+.plus-btn.small .icon { width: 20px; height: 20px; }
+.tight-head { margin-top: 6px; }
+.todo-filter { margin-bottom: 12px; }
+.todos { display: grid; gap: 8px; }
+.todo { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; cursor: pointer; box-shadow: var(--shadow); }
+.todo.is-done { box-shadow: none; background: var(--softer); }
+.todo.is-done .todo-main b { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 50%, transparent); }
+.todo-check { flex: none; width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--accent); background: var(--card); color: transparent; display: grid; place-items: center; cursor: pointer; padding: 0; margin-top: 1px; }
+.todo-check .icon { width: 17px; height: 17px; }
+.todo-check.on { background: var(--deep); border-color: var(--deep); color: #fff; }
+.todo-check.off { border: 2px dashed var(--line); cursor: default; }
+.todo-main { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.todo-main b { font-size: 15.5px; line-height: 1.3; overflow-wrap: anywhere; }
+.todo-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.todo-for { display: inline-flex; align-items: center; gap: 5px; }
+.avs.mini .av { width: 18px; height: 18px; font-size: 9px; }
+.avs.mini .av + .av { margin-left: -6px; }
+.due { color: var(--muted); }
+.due.soon { color: var(--deep); font-weight: 700; }
+.due.late { color: var(--danger); font-weight: 700; }
+.todo-notes { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.done-box { margin-top: 16px; }
+.done-box summary { cursor: pointer; font-weight: 700; color: var(--muted); font-size: 14px; margin-bottom: 8px; list-style: none; }
+.done-box summary::before { content: '▸ '; }
+.done-box[open] summary::before { content: '▾ '; }
+.starter-btn { margin-top: 20px; }
+.check-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.check-chips .chip .av.tiny { border: 0; }
+.before-row { margin-top: 8px; }
+.before-row .input:first-child { width: 80px; flex: none; }
+.before-row select { width: auto; flex: 1; }
+.before-row span { color: var(--muted); font-weight: 600; }
+.seg.wide + .input { margin-top: 8px; }

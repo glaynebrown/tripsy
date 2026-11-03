@@ -55,6 +55,15 @@ service cloud.firestore {
         allow read: if signedIn() && me() in trip(tid).members;
         allow create, update, delete: if signedIn() && me() in trip(tid).members && trip(tid).roles[me()] == 'edit';
       }
+      // to-dos: editors add and change them; anyone on the trip can check off their own part
+      match /todos/{id} {
+        allow read: if signedIn() && me() in trip(tid).members;
+        allow create, delete: if signedIn() && me() in trip(tid).members && trip(tid).roles[me()] == 'edit';
+        allow update: if signedIn() && me() in trip(tid).members && (
+          trip(tid).roles[me()] == 'edit'
+          || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['done'])
+              && request.resource.data.done.diff(resource.data.get('done', {})).affectedKeys().hasOnly([me()])));
+      }
       // the day-by-day plan: same as ideas
       match /plan/{id} {
         allow read: if signedIn() && me() in trip(tid).members;

@@ -6,7 +6,7 @@
    a "View as" switch to check it from a friend's side. */
 
 const Demo = (() => {
-  const KEY = 'tr-demo3';
+  const KEY = 'tr-demo4';
   let db = null;
   let as = 'izzy';
   let cb = null;
@@ -102,6 +102,18 @@ const Demo = (() => {
         stop('2027-04-20', 0, { idea: cn('Panda'), time: '07:30', slot: 'morning', note: 'Get there right at opening' }),
       ],
     };
+    // to-dos on the China trip
+    const todo = (title, o) => ({ id: newId(), title, notes: '', for: 'all', due: '', before: null, done: {}, by: 'maddie', createdAt: now - Math.random() * 1e8, ...o });
+    out.todos = {
+      china: [
+        todo('Passport valid 6+ months after the trip', { before: 90, done: { maddie: now } }),
+        todo('Apply for the China visa', { before: 60, notes: 'Takes about 4 business days at the visa center. Need the hotel bookings first.' }),
+        todo('International driver’s permit', { for: 'izzy', before: 30, notes: 'AAA office — bring 2 passport photos' }),
+        todo('Book the Great Wall tour', { for: 'maddie', due: '2027-01-15' }),
+        todo('Download Alipay + WeChat and add a card', { before: 14 }),
+        todo('Get a VPN on our phones', { before: 7, notes: 'Google, Instagram etc. are blocked there' }),
+      ],
+    };
     return out;
   }
   const NAMES = { izzy: 'Izzy', maddie: 'Maddie', soph: 'Sophia', ava: 'Ava' };
@@ -124,9 +136,9 @@ const Demo = (() => {
   function emit() {
     if (!cb) return;
     const trips = Object.entries(db.trips).filter(([, t]) => t.members.includes(as)).map(([id, t]) => ({ id, ...clone(t) }));
-    const ideas = {}, plan = {};
-    for (const t of trips) { ideas[t.id] = clone(db.ideas[t.id] || []); plan[t.id] = clone((db.plan || {})[t.id] || []); }
-    cb({ me: as, loaded: true, profile: db.users[as] ? clone(db.users[as]) : null, trips, ideas, plan, someday: clone(db.someday[as] || []) });
+    const ideas = {}, plan = {}, todos = {};
+    for (const t of trips) { ideas[t.id] = clone(db.ideas[t.id] || []); plan[t.id] = clone((db.plan || {})[t.id] || []); todos[t.id] = clone((db.todos || {})[t.id] || []); }
+    cb({ me: as, loaded: true, profile: db.users[as] ? clone(db.users[as]) : null, trips, ideas, plan, todos, someday: clone(db.someday[as] || []) });
   }
 
   load();
@@ -237,6 +249,32 @@ const Demo = (() => {
       if (!editor(tid)) return fail('You can look at this trip but not change it.');
       const list = (db.plan || {})[tid] || [];
       for (const { id, ...m } of moves) { const it = list.find(x => x.id === id); if (it) Object.assign(it, m); }
+      save(); return Promise.resolve();
+    },
+    saveTodo(tid, item) {
+      if (!editor(tid)) return fail('You can look at this trip but not change it.');
+      const list = (db.todos = db.todos || {})[tid] = db.todos[tid] || [];
+      if (item.id) { const i = list.findIndex(x => x.id === item.id); if (i >= 0) list[i] = { ...list[i], ...item }; save(); return Promise.resolve(item.id); }
+      const id = newId();
+      list.push({ ...item, id, done: {}, by: as, createdAt: Date.now() });
+      save(); return Promise.resolve(id);
+    },
+    addTodos(tid, items) {
+      if (!editor(tid)) return fail('You can look at this trip but not change it.');
+      const list = (db.todos = db.todos || {})[tid] = db.todos[tid] || [];
+      items.forEach((it, n) => list.push({ ...it, id: newId(), done: {}, by: as, createdAt: Date.now() + n }));
+      save(); return Promise.resolve();
+    },
+    checkTodo(tid, id, on) {
+      const t = db.trips[tid];
+      if (!t || !t.members.includes(as)) return fail('You’re not on this trip.');
+      const it = ((db.todos || {})[tid] || []).find(x => x.id === id);
+      if (it) { it.done = it.done || {}; if (on) it.done[as] = Date.now(); else delete it.done[as]; }
+      save(); return Promise.resolve();
+    },
+    deleteTodo(tid, id) {
+      if (!editor(tid)) return fail('You can look at this trip but not change it.');
+      if (db.todos && db.todos[tid]) db.todos[tid] = db.todos[tid].filter(x => x.id !== id);
       save(); return Promise.resolve();
     },
     deletePlan(tid, id) {

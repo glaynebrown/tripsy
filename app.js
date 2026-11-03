@@ -23,6 +23,7 @@
   let user = null;
   let S = null;
   let pending = false;
+  let dragging = false;
   const ui = { cat: 'all' };
 
   const CATS = [
@@ -46,7 +47,48 @@
   const AV = ['#F4C7D7', '#C9D8F2', '#D8CBEE', '#C8E6DA', '#F6D9B8', '#F2C4BE'];
   const avColor = uid => AV[[...String(uid)].reduce((a, c) => a + c.charCodeAt(0), 0) % AV.length];
   const avatar = (t, uid, cls) => `<span class="av ${cls || ''}" style="background:${avColor(uid)}" title="${esc(nameIn(t, uid))}">${esc(first(uid === S.me ? myName() : nameIn(t, uid)))}</span>`;
-  const sortedTrips = () => S.trips.slice().sort((a, b) => (a.start || '9') .localeCompare(b.start || '9') || (b.createdAt || 0) - (a.createdAt || 0));
+  // My own order (dragged on the Trips screen). Trips I haven't placed yet -- new
+  // or just joined -- go on top, newest first.
+  function sortedTrips() {
+    const order = (S.profile && S.profile.tripOrder) || [];
+    const at = id => order.indexOf(id);
+    return S.trips.slice().sort((a, b) => {
+      const A = at(a.id), B = at(b.id);
+      if (A < 0 && B < 0) return (b.createdAt || 0) - (a.createdAt || 0);
+      if (A < 0 || B < 0) return A < 0 ? -1 : 1;
+      return A - B;
+    });
+  }
+  // My chip order (Must-dos + the kinds), the same on every trip. "All" always comes first.
+  function chipOrder() {
+    const keys = ['must', ...CATS.map(c => c.id)];
+    const mine = ((S.profile && S.profile.chipOrder) || []).filter(k => keys.includes(k));
+    return [...mine, ...keys.filter(k => !mine.includes(k))];
+  }
+  const orderedCats = () => chipOrder().filter(k => k !== 'must').map(catOf);
+  // Put the visible chips' new order into the full order, keeping hidden ones where they were.
+  function mergeOrder(full, shown) {
+    const set = new Set(shown);
+    let i = 0;
+    return full.map(k => (set.has(k) ? shown[i++] : k));
+  }
+  function chipsHtml(all, counts, musts) {
+    const chip = (id, label, n) => `<button class="chip ${ui.cat === id ? 'on' : ''}" data-cat="${id}">${label} <span class="n">${n}</span></button>`;
+    return `<div class="chips scroll" id="chips">${chip('all', 'All', all.length)}${chipOrder().map(k => {
+      if (k === 'must') return musts ? chip('must', '💖 Must-dos', musts) : '';
+      const c = catOf(k);
+      return counts[k] ? chip(k, `${c.emoji} ${c.name}`, counts[k]) : '';
+    }).join('')}</div>`;
+  }
+  function sortableChips() {
+    const row = $('#chips');
+    if (!row) return;
+    sortable(row, '.chip:not([data-cat="all"])', { axis: 'x', key: el => el.dataset.cat, onDrop: keys => {
+      const next = mergeOrder(chipOrder(), keys);
+      S.profile.chipOrder = next;
+      API.saveProfile({ chipOrder: next }).catch(oops);
+    } });
+  }
   const lookFor = t => (t && t.look && !(S.profile.keepMine || {})[t.id] ? t.look : S.profile.look);
   const safeUrl = u => (/^https?:\/\//i.test(u || '') ? u : '');
   const mapsUrl = (address, t) => 'https://maps.apple.com/?q=' + encodeURIComponent(address + (t && t.place && !address.includes(t.place) ? ', ' + t.place : ''));
@@ -133,6 +175,80 @@
   sheetWrap.addEventListener('click', e => { if (e.target.closest('[data-act="close"]')) closeSheet(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !sheetWrap.hidden) closeSheet(); });
 
+  // ---------- press, hold and drag to reorder ----------
+  // Holding still for a moment picks an item up (so normal swipes still scroll
+  // and taps still tap). Then it follows the finger; let go to drop it.
+  // opts: { axis: 'x' (one row, like chips) or both, key: el -> id, onDrop: ids -> }
+  function sortable(box, sel, opts) {
+    const items = () => [...box.querySelectorAll(sel)];
+    let hold = null, drag = null;
+    const cancelHold = () => { if (hold) { clearTimeout(hold.t); hold = null; } };
+    const blockTouch = e => { if (drag) e.preventDefault(); };
+    box.addEventListener('touchmove', blockTouch, { passive: false });
+    box.addEventListener('contextmenu', e => { if (hold || drag) e.preventDefault(); });
+
+    box.addEventListener('pointerdown', e => {
+      const el = e.target.closest(sel);
+      if (!el || !box.contains(el) || e.button > 0) return;
+      cancelHold();
+      hold = { el, x: e.clientX, y: e.clientY, id: e.pointerId };
+      hold.t = setTimeout(() => lift(e), e.pointerType === 'mouse' ? 250 : 380);
+    });
+    function lift() {
+      const { el, x, y, id } = hold;
+      hold = null;
+      dragging = true;
+      drag = { el, x, y, id, left: el.offsetLeft, top: el.offsetTop, sx: box.scrollLeft, sy: window.scrollY };
+      try { box.setPointerCapture(id); } catch (err) {}
+      el.classList.add('lifted');
+      box.classList.add('sorting');
+      if (navigator.vibrate) navigator.vibrate(12);
+    }
+    box.addEventListener('pointermove', e => {
+      if (hold && Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 8) cancelHold();
+      if (!drag || e.pointerId !== drag.id) return;
+      e.preventDefault();
+      const px = e.clientX, py = e.clientY;
+      // nudge the row/page along when dragging near its edge
+      if (opts.axis === 'x') {
+        const r = box.getBoundingClientRect();
+        if (px < r.left + 36) box.scrollLeft -= 10; else if (px > r.right - 36) box.scrollLeft += 10;
+      } else if (py < 90) window.scrollBy(0, -12); else if (py > innerHeight - 110) window.scrollBy(0, 12);
+      const { el } = drag;
+      const list = items();
+      const over = list.find(o => {
+        if (o === el) return false;
+        const r = o.getBoundingClientRect();
+        return opts.axis === 'x' ? px > r.left && px < r.right : px > r.left && px < r.right && py > r.top && py < r.bottom;
+      });
+      if (over) {
+        const before = list.indexOf(over) < list.indexOf(el);
+        box.insertBefore(el, before ? over : over.nextSibling);
+      }
+      const dx = px - drag.x - (el.offsetLeft - drag.left) + (box.scrollLeft - drag.sx);
+      const dy = opts.axis === 'x' ? 0 : py - drag.y - (el.offsetTop - drag.top) + (window.scrollY - drag.sy);
+      el.style.transform = `translate(${dx}px, ${dy}px) scale(1.04)`;
+    });
+    const drop = e => {
+      cancelHold();
+      if (!drag || (e && e.pointerId !== drag.id)) return;
+      const { el } = drag;
+      drag = null;
+      el.style.transform = '';
+      el.classList.remove('lifted');
+      box.classList.remove('sorting');
+      // the lift-and-drop shouldn't also count as a tap
+      const eat = ev => { ev.preventDefault(); ev.stopPropagation(); };
+      box.addEventListener('click', eat, { capture: true, once: true });
+      setTimeout(() => box.removeEventListener('click', eat, { capture: true }), 400);
+      dragging = false;
+      opts.onDrop(items().map(opts.key));
+      if (pending) setTimeout(render, 50);
+    };
+    box.addEventListener('pointerup', drop);
+    box.addEventListener('pointercancel', drop);
+  }
+
   // ---------- photos ----------
   // Shrinks a picked photo so it fits comfortably in the database.
   // opts.max = longest side in px, opts.limit = most characters to store
@@ -200,7 +316,7 @@
 
   function render() {
     if (!S) return;
-    if (typing() || !sheetWrap.hidden) { pending = true; return; }
+    if (typing() || !sheetWrap.hidden || dragging) { pending = true; return; }
     pending = false;
     if (!S.loaded) { view.innerHTML = '<p class="loading">Loading…</p>'; return; }
     if (!S.profile) { renderSetup(); return; }
@@ -336,7 +452,7 @@
     const look = lookFor(t);
     const when = t.start ? dateRange(t.start, t.end) : 'No dates yet';
     const soon = untilText(t.start);
-    return `<a class="trip-card" href="#/t/${esc(t.id)}" style="${Themes.styleAttr(look)}">
+    return `<a class="trip-card" href="#/t/${esc(t.id)}" data-tid="${esc(t.id)}" draggable="false" style="${Themes.styleAttr(look)}">
       <div class="trip-cover ${t.cover ? 'photo' : ''}">${t.cover ? coverImg(t, 'cover-img') : `<span class="trip-emoji">${esc(t.emoji || '✈️')}</span>`}${soon ? `<span class="soon">${esc(soon)}</span>` : ''}</div>
       <div class="trip-body">
         <h3>${esc(t.name)}</h3>
@@ -368,6 +484,10 @@
         <p>Start a trip to collect places, food and ideas — then invite your friends to add theirs.</p>
         <button class="btn" id="new2">${icon('plus')} Start a trip</button>
       </div>`}`;
+    if ($('.trips')) sortable($('.trips'), '.trip-card', { key: el => el.dataset.tid, onDrop: ids => {
+      S.profile.tripOrder = ids;
+      API.saveProfile({ tripOrder: ids }).catch(oops);
+    } });
     const menu = $('#plus-menu');
     const showMenu = on => { menu.hidden = !on; $('#plus').setAttribute('aria-expanded', on); };
     $('#plus').onclick = e => { e.stopPropagation(); showMenu(menu.hidden); };
@@ -495,7 +615,7 @@
     const when = t.start ? dateRange(t.start, t.end) : '';
     const soon = untilText(t.start);
 
-    view.innerHTML = `<a class="back" href="#/trips">${icon('back')} Trips</a>
+    view.innerHTML = `<div class="back-row"><a class="back" href="#/trips">${icon('back')} Trips</a><button class="icon-btn" id="more" aria-label="Trip options">${icon('dots')}</button></div>
       <section class="hero ${t.cover ? 'has-cover' : ''}">
         ${t.cover ? `<div class="hero-cover">${coverImg(t, 'cover-img')}</div>` : `<div class="hero-emoji">${esc(t.emoji || '✈️')}</div>`}
         <div class="hero-main">
@@ -508,17 +628,9 @@
             ${edit ? '' : '<span class="tag">View only</span>'}
           </button>
         </div>
-        <div class="hero-acts">
-          <button class="btn soft small" id="invite">${icon('person-plus')} Invite</button>
-          <button class="icon-btn" id="more" aria-label="Trip options">${icon('dots')}</button>
-        </div>
       </section>
       ${t.look && (S.profile.keepMine || {})[t.id] ? `<p class="look-note">${icon('palette')} You’re seeing your own look here. <button class="linkbtn" id="use-look">Use the trip’s look</button></p>` : ''}
-      ${all.length ? `<div class="chips scroll">
-        <button class="chip ${ui.cat === 'all' ? 'on' : ''}" data-cat="all">All <span class="n">${all.length}</span></button>
-        ${musts ? `<button class="chip ${ui.cat === 'must' ? 'on' : ''}" data-cat="must">💖 Must-dos <span class="n">${musts}</span></button>` : ''}
-        ${CATS.filter(c => counts[c.id]).map(c => `<button class="chip ${ui.cat === c.id ? 'on' : ''}" data-cat="${c.id}">${c.emoji} ${c.name} <span class="n">${counts[c.id]}</span></button>`).join('')}
-      </div>
+      ${all.length ? `${chipsHtml(all, counts, musts)}
       <div class="ideas">${shown.map(i => ideaCard(i, t)).join('')}</div>` : `<div class="empty">
         <div class="empty-emoji">🗺️</div>
         <h2>Start dreaming</h2>
@@ -528,8 +640,8 @@
 
     view.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { ui.cat = b.dataset.cat; render(); });
     view.querySelectorAll('[data-idea]').forEach(b => b.onclick = () => ideaDetail(t, all.find(i => i.id === b.dataset.idea)));
+    sortableChips();
     if ($('#add')) $('#add').onclick = () => ideaSheet({ trip: t, item: { cat: ['all', 'must'].includes(ui.cat) ? '' : ui.cat, must: ui.cat === 'must' } });
-    $('#invite').onclick = () => inviteSheet(t);
     $('#people').onclick = () => peopleSheet(t);
     $('#more').onclick = () => tripMenu(t);
     if ($('#use-look')) $('#use-look').onclick = () => API.setKeepMine(t.id, false).catch(oops);
@@ -587,7 +699,7 @@
     const isNew = !d.id;
     const draw = () => {
       openSheet(`<div class="sheet-head"><h2>${isNew ? 'New idea' : 'Edit idea'}</h2><button class="btn quiet" data-act="close">Cancel</button></div>
-        <div class="cat-pick">${CATS.map(c => `<button type="button" class="${d.cat === c.id ? 'on' : ''}" data-c="${c.id}"><span>${c.emoji}</span>${c.name}</button>`).join('')}</div>
+        <div class="cat-pick">${orderedCats().map(c => `<button type="button" class="${d.cat === c.id ? 'on' : ''}" data-c="${c.id}"><span>${c.emoji}</span>${c.name}</button>`).join('')}</div>
         <div class="field"><label for="f-name">Name</label><input class="input" id="f-name" value="${esc(d.name)}" placeholder="${{ food: 'Restaurant or café', stay: 'Hotel, Airbnb…', sights: 'Place to see', do: 'Something to do', shop: 'Shop or market' }[d.cat] || 'What is it?'}"></div>
         ${trip ? '' : `<div class="field"><label for="f-where">Where</label><input class="input" id="f-where" value="${esc(d.where)}" placeholder="City or country"></div>`}
         <div class="photo-row">
@@ -702,15 +814,17 @@
     const keep = !!(S.profile.keepMine || {})[t.id];
     openSheet(`<div class="sheet-head"><h2>${esc(t.name)}</h2><button class="btn quiet" data-act="close">Close</button></div>
       <div class="menu">
-        ${edit ? `<button data-m="details">${icon('edit')} Trip name, place & dates</button>` : ''}
+        <button data-m="invite">${icon('share')} Invite friends</button>
+        ${edit ? `<button data-m="details">${icon('edit')} Trip name, place, dates & photo</button>` : ''}
         <button data-m="look">${icon('palette')} Trip look ${t.look ? `<span class="menu-sub">${keep ? 'Using my own' : 'Shared look on'}</span>` : '<span class="menu-sub">None — everyone sees their own</span>'}</button>
-        <button data-m="people">${icon('person-plus')} People & invites</button>
+        <button data-m="people">${icon('person-plus')} Who’s going</button>
         ${own ? `<button data-m="delete" class="danger-row">Delete trip</button>` : `<button data-m="leave" class="danger-row">Leave trip</button>`}
       </div>`, async e => {
       const m = e.target.closest('[data-m]');
       if (!m) return;
       const k = m.dataset.m;
-      if (k === 'details') tripSheet(t);
+      if (k === 'invite') inviteSheet(t);
+      else if (k === 'details') tripSheet(t);
       else if (k === 'look') tripLookSheet(t);
       else if (k === 'people') peopleSheet(t);
       else if (k === 'leave') {
@@ -783,16 +897,14 @@
         <div><h1>Someday ☁️</h1><p class="sub">Places you’d love to go, not tied to a trip yet.</p></div>
         <button class="plus-btn" id="add-s" aria-label="Add a someday idea">${icon('plus')}</button>
       </div>
-      ${all.length ? `<div class="chips scroll">
-        <button class="chip ${ui.cat === 'all' ? 'on' : ''}" data-cat="all">All <span class="n">${all.length}</span></button>
-        ${CATS.filter(c => counts[c.id]).map(c => `<button class="chip ${ui.cat === c.id ? 'on' : ''}" data-cat="${c.id}">${c.emoji} ${c.name} <span class="n">${counts[c.id]}</span></button>`).join('')}
-      </div>
+      ${all.length ? `${chipsHtml(all, counts, 0)}
       <div class="ideas">${shown.map(i => ideaCard(i, null)).join('')}</div>` : `<div class="empty">
         <div class="empty-emoji">☁️</div><h2>Your someday list</h2>
         <p>Saw a dreamy hotel or a restaurant you have to try one day? Save it here, then move it into a trip when it’s time.</p>
       </div>`}`;
     view.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { ui.cat = b.dataset.cat; render(); });
     view.querySelectorAll('[data-idea]').forEach(b => b.onclick = () => ideaDetail(null, all.find(i => i.id === b.dataset.idea)));
+    sortableChips();
     $('#add-s').onclick = () => ideaSheet({ trip: null, item: { cat: ui.cat === 'all' ? '' : ui.cat } });
   }
 

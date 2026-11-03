@@ -417,3 +417,21 @@ main { max-width: 980px; margin: 0 auto; padding: 8px 20px 40px; }
 .md .input { min-width: 0; }
 input[type="date"].input { -webkit-appearance: none; appearance: none; min-height: 46px; display: block; }
 input[type="date"].input::-webkit-date-and-time-value { text-align: left; }
+
+/* ---------- press, hold and drag to reorder ---------- */
+.trip-card, .chip { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.trip-card .cover-img, .trip-card img { -webkit-user-drag: none; }
+.lifted {
+  position: relative; z-index: 40; transition: none !important;
+  box-shadow: 0 18px 40px -12px color-mix(in srgb, var(--deep) 55%, transparent) !important;
+  opacity: .96; cursor: grabbing;
+}
+.sorting > :not(.lifted) { transition: transform .15s ease; }
+.sorting { cursor: grabbing; }
+
+/* "< Trips" on the left, the trip's ⋯ menu on the right */
+.hero { grid-template-columns: auto 1fr; }
+.hero.has-cover { grid-template-columns: 1fr; }
+.back-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; }
+.back-row .back { margin-top: 0; }
+.back-row .icon-btn { width: 36px; height: 36px; }

@@ -1,0 +1,76 @@
+rules_version = '2';
+// Tripsy: each trip is seen only by its own people. Editors can change it;
+// view-only people can just look. The owner manages people and the invite code.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function me() { return request.auth.uid; }
+    function trip(tid) { return get(/databases/$(database)/documents/trips/$(tid)).data; }
+    function changed() { return request.resource.data.diff(resource.data).affectedKeys(); }
+    function onlyMeIn(field) {
+      return request.resource.data[field].diff(resource.data.get(field, {})).affectedKeys().hasOnly([me()]);
+    }
+
+    match /users/{uid} {
+      allow read, write: if signedIn() && me() == uid;
+      match /someday/{id} {
+        allow read, write: if signedIn() && me() == uid;
+      }
+    }
+
+    match /trips/{tid} {
+      function member() { return me() in resource.data.members; }
+      function editor() { return member() && resource.data.roles[me()] == 'edit'; }
+      function owner() { return resource.data.owner == me(); }
+
+      allow read: if signedIn() && member();
+      allow create: if signedIn()
+        && request.resource.data.owner == me()
+        && request.resource.data.members == [me()]
+        && request.resource.data.roles == { (me()): 'edit' };
+      allow update: if signedIn() && (
+        // editors: the trip's details and its shared look
+        (editor() && changed().hasOnly(['name', 'place', 'emoji', 'start', 'end', 'look']))
+        // anyone on the trip: their own name
+        || (member() && changed().hasOnly(['people']) && onlyMeIn('people'))
+        // the owner: people, roles, the invite code, handing the trip on
+        || (owner() && changed().hasOnly(['name', 'place', 'emoji', 'start', 'end', 'look', 'members', 'roles', 'people', 'code', 'joinRole', 'owner'])
+            && request.resource.data.owner in request.resource.data.members)
+        // join: add only yourself, with the current code and the role the owner picked
+        || (!member()
+            && changed().hasOnly(['members', 'roles', 'people', 'joinCode'])
+            && request.resource.data.joinCode == resource.data.code + ':' + me()
+            && request.resource.data.members.toSet() == resource.data.members.toSet().union([me()].toSet())
+            && onlyMeIn('roles') && onlyMeIn('people')
+            && request.resource.data.roles[me()] == resource.data.get('joinRole', 'edit'))
+        // leave: take only yourself off (the owner hands the trip on or deletes it instead)
+        || (member() && !owner()
+            && changed().hasOnly(['members', 'roles', 'people'])
+            && request.resource.data.members.toSet() == resource.data.members.toSet().difference([me()].toSet())
+            && !(me() in request.resource.data.roles) && !(me() in request.resource.data.people))
+      );
+      allow delete: if signedIn() && owner();
+
+      match /ideas/{id} {
+        allow read: if signedIn() && me() in trip(tid).members;
+        allow create, update, delete: if signedIn() && me() in trip(tid).members && trip(tid).roles[me()] == 'edit';
+      }
+    }
+
+    // Invite codes. Anyone signed in can look one up by its exact code (that's
+    // how joining works); nobody can list them.
+    match /codes/{code} {
+      function tripAfter(tid) { return getAfter(/databases/$(database)/documents/trips/$(tid)).data; }
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if signedIn()
+        && tripAfter(request.resource.data.tid).owner == me()
+        && tripAfter(request.resource.data.tid).code == request.resource.data.code
+        && tripAfter(request.resource.data.tid).get('joinRole', 'edit') == request.resource.data.role;
+      // an old code: the trip is gone, or its owner moved it to a new code
+      allow delete: if signedIn()
+        && (!existsAfter(/databases/$(database)/documents/trips/$(resource.data.tid))
+            || (tripAfter(resource.data.tid).owner == me() && tripAfter(resource.data.tid).code != resource.data.code));
+    }
+  }
+}

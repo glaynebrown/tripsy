@@ -630,8 +630,8 @@
         </div>
       </section>
       ${t.look && (S.profile.keepMine || {})[t.id] ? `<p class="look-note">${icon('palette')} You’re seeing your own look here. <button class="linkbtn" id="use-look">Use the trip’s look</button></p>` : ''}
-      ${all.length ? `${chipsHtml(all, counts, musts)}
-      <div class="ideas">${shown.map(i => ideaCard(i, t)).join('')}</div>` : `<div class="empty">
+      ${all.length ? `${modeSwitch('trip')}${chipsHtml(all, counts, musts)}
+      ${modeOf('trip') === 'map' ? mapSection(shown, t, edit) : `<div class="ideas">${shown.map(i => ideaCard(i, t)).join('')}</div>`}` : `<div class="empty">
         <div class="empty-emoji">🗺️</div>
         <h2>Start dreaming</h2>
         <p>${edit ? 'Add places to see, restaurants, stays — anything you might want to do.' : 'Nothing here yet. You can see this trip but not add to it.'}</p>
@@ -641,10 +641,41 @@
     view.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { ui.cat = b.dataset.cat; render(); });
     view.querySelectorAll('[data-idea]').forEach(b => b.onclick = () => ideaDetail(t, all.find(i => i.id === b.dataset.idea)));
     sortableChips();
+    bindMode('trip');
+    if (modeOf('trip') === 'map') bindMap(t.id + ':' + ui.cat, shown, t, t.place, i => ideaDetail(t, i));
     if ($('#add')) $('#add').onclick = () => ideaSheet({ trip: t, item: { cat: ['all', 'must'].includes(ui.cat) ? '' : ui.cat, must: ui.cat === 'must' } });
     $('#people').onclick = () => peopleSheet(t);
     $('#more').onclick = () => tripMenu(t);
     if ($('#use-look')) $('#use-look').onclick = () => API.setKeepMine(t.id, false).catch(oops);
+  }
+
+  // Ideas · Map switch (remembered per screen)
+  const modeOf = where => ls.get('tr-mode-' + where, 'ideas');
+  const modeSwitch = where => `<div class="seg mode" role="tablist">
+      <button class="${modeOf(where) !== 'map' ? 'on' : ''}" data-mode="ideas" role="tab">${icon('grid')} Ideas</button>
+      <button class="${modeOf(where) === 'map' ? 'on' : ''}" data-mode="map" role="tab">${icon('map')} Map</button>
+    </div>`;
+  function bindMode(where) {
+    view.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { ls.set('tr-mode-' + where, b.dataset.mode); Maps.forget(); render(); });
+  }
+  // The map, plus the ideas that aren't on it yet.
+  function mapSection(shown, trip, canChange) {
+    const off = shown.filter(i => !i.loc);
+    return `<div class="map-slot" id="map-slot"><p class="loading">Loading the map…</p></div>
+      ${off.length ? `<div class="nomap">
+        <div class="label">Not on the map yet</div>
+        ${off.map(i => `<div class="nomap-row"><span>${catOf(i.cat).emoji}</span><b>${esc(i.name)}</b>
+          ${canChange ? (i.address ? `<button class="btn soft small" data-find="${esc(i.id)}">Find</button>` : `<button class="btn ghost small" data-place="${esc(i.id)}">Add spot</button>`) : ''}</div>`).join('')}
+      </div>` : ''}`;
+  }
+  function bindMap(key, shown, trip, place, open) {
+    const slot = $('#map-slot');
+    if (!slot) return;
+    Maps.show(slot, { key, items: shown, trip, place, onOpen: id => open(shown.find(i => i.id === id)) })
+      .then(() => { const l = slot.querySelector('.loading'); if (l) l.remove(); })
+      .catch(e => { slot.innerHTML = `<p class="empty small">${esc(e.message)}</p>`; });
+    view.querySelectorAll('[data-find]').forEach(b => b.onclick = async () => { b.disabled = true; if (!(await findOnMap(trip, shown.find(i => i.id === b.dataset.find)))) b.disabled = false; });
+    view.querySelectorAll('[data-place]').forEach(b => b.onclick = () => ideaSheet({ trip, item: shown.find(i => i.id === b.dataset.place) }));
   }
 
   function ideaCard(i, t) {
@@ -672,7 +703,9 @@
       ${i.where ? `<div class="trip-place">${icon('pin')}${esc(i.where)}</div>` : ''}
       ${i.notes ? `<p class="detail-notes">${esc(i.notes)}</p>` : ''}
       <div class="detail-links">
-        ${i.address ? `<a class="openlink" href="${esc(mapsUrl(i.address, t))}" target="_blank" rel="noopener">${icon('pin')} ${esc(i.address)}</a>` : ''}
+        ${i.loc ? `<a class="openlink" href="${esc(`https://maps.apple.com/?ll=${i.loc.lat},${i.loc.lng}&q=${encodeURIComponent(i.name)}`)}" target="_blank" rel="noopener">${icon('pin')} ${esc(i.address || 'Open in Maps')}</a>`
+          : i.address ? `<a class="openlink" href="${esc(mapsUrl(i.address, t))}" target="_blank" rel="noopener">${icon('pin')} ${esc(i.address)}</a>` : ''}
+        ${!i.loc && i.address && edit ? `<button class="linkbtn small-link" id="d-find">📍 Put it on the map</button>` : ''}
         ${link ? `<a class="openlink" href="${esc(link)}" target="_blank" rel="noopener">${icon('link')} ${esc(link.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, '').slice(0, 48))}</a>` : ''}
       </div>
       ${t && i.by ? `<p class="hint">Added by ${esc(nameIn(t, i.by))}</p>` : ''}
@@ -683,6 +716,7 @@
         <button class="btn quiet" data-act="close">Close</button>
       </div>`, async e => {
       if (e.target.closest('#d-edit')) ideaSheet({ trip: t, item: i });
+      else if (e.target.closest('#d-find')) { e.target.disabled = true; if (await findOnMap(t, i)) closeSheet(); else e.target.disabled = false; }
       else if (e.target.closest('#d-someday')) {
         try { await API.copyToSomeday(i, t.place); closeSheet(); toast('Saved to Someday ☁️'); } catch (err) { oops(err); }
       } else if (e.target.closest('#d-move')) moveSheet(i);
@@ -695,41 +729,108 @@
 
   // Add/edit an idea -- on a trip (trip set) or on Someday (trip null).
   function ideaSheet({ trip, item }) {
-    const d = { cat: '', name: '', photo: '', link: '', address: '', notes: '', must: false, where: '', ...item };
+    const d = { cat: '', name: '', photo: '', link: '', address: '', notes: '', must: false, where: '', loc: null, pin: null, ...item };
     const isNew = !d.id;
+    const edit = !trip || canEdit(trip);
+    let showMap = !!d.loc, styling = false, pick = null, sugs = [], findT = null, near = null;
+    // search close to the trip's other pins, or its "where"
+    if (trip) {
+      near = Maps.centerOf(S.ideas[trip.id] || []);
+      if (!near && trip.place) Maps.placeCenter(trip.place).then(c => { near = c; });
+    }
+    const st = () => Maps.styleFor(d, trip);
     const draw = () => {
+      if (pick) { pick.destroy(); pick = null; }
       openSheet(`<div class="sheet-head"><h2>${isNew ? 'New idea' : 'Edit idea'}</h2><button class="btn quiet" data-act="close">Cancel</button></div>
         <div class="cat-pick">${orderedCats().map(c => `<button type="button" class="${d.cat === c.id ? 'on' : ''}" data-c="${c.id}"><span>${c.emoji}</span>${c.name}</button>`).join('')}</div>
-        <div class="field"><label for="f-name">Name</label><input class="input" id="f-name" value="${esc(d.name)}" placeholder="${{ food: 'Restaurant or café', stay: 'Hotel, Airbnb…', sights: 'Place to see', do: 'Something to do', shop: 'Shop or market' }[d.cat] || 'What is it?'}"></div>
-        ${trip ? '' : `<div class="field"><label for="f-where">Where</label><input class="input" id="f-where" value="${esc(d.where)}" placeholder="City or country"></div>`}
         <div class="photo-row">
           <button type="button" class="photo-btn" id="f-pic">${d.photo ? `<img src="${esc(d.photo)}" alt="">` : `<span>${icon('photo')}<small>Add photo</small></span>`}</button>
           <div class="photo-side">
-            <input class="input" id="f-link" type="url" inputmode="url" value="${esc(d.link)}" placeholder="Link (website, Instagram…)">
-            <input class="input" id="f-addr" value="${esc(d.address)}" placeholder="Address (opens in Maps)">
+            <input class="input" id="f-name" value="${esc(d.name)}" aria-label="Name" placeholder="${{ food: 'Restaurant or café', stay: 'Hotel, Airbnb…', sights: 'Place to see', do: 'Something to do', shop: 'Shop or market' }[d.cat] || 'Name — what is it?'}">
+            <input class="input" id="f-link" type="url" inputmode="url" value="${esc(d.link)}" aria-label="Link" placeholder="Link (website, Instagram…)">
           </div>
         </div>
         ${d.photo ? '<button type="button" class="linkbtn small-link" id="f-nophoto">Remove photo</button>' : ''}
+        ${trip ? '' : `<div class="field tight"><label for="f-where">Where</label><input class="input" id="f-where" value="${esc(d.where)}" placeholder="City or country"></div>`}
+        <div class="field tight loc-field">
+          <label for="f-addr">Location</label>
+          <div class="loc-search">
+            <input class="input" id="f-addr" value="${esc(d.address)}" autocomplete="off" placeholder="Search a place or address">
+            <div class="sugs" id="f-sugs" hidden></div>
+          </div>
+          ${showMap ? `<div class="loc-map" id="f-map"></div><p class="hint small-hint">${d.loc ? 'Drag the pin to move it, or tap the map.' : 'Tap the map to drop the pin.'}</p>` : ''}
+          <div class="loc-acts">
+            <span class="pin-prev" id="pin-prev">${Maps.pinHtml(st(), { scale: 0.75 })}</span>
+            <button type="button" class="linkbtn" id="f-style">${styling ? 'Done styling' : 'Pin style'}</button>
+            ${showMap ? '' : '<button type="button" class="linkbtn" id="f-drop">Drop a pin on the map</button>'}
+            <button type="button" class="linkbtn muted-link" id="f-unpin" ${d.loc ? '' : 'hidden'}>Remove pin</button>
+          </div>
+          ${styling ? '<div class="styler" id="styler"></div>' : ''}
+        </div>
         <textarea class="input notes" id="f-notes" placeholder="Notes — hours, what to order, tips…">${esc(d.notes)}</textarea>
         <button type="button" class="must-toggle ${d.must ? 'on' : ''}" id="f-must">💖 Must-do</button>
         <div class="sheet-foot"><button class="btn wide" id="f-save">${isNew ? 'Add idea' : 'Save'}</button></div>`, onClick);
+      sheet.oninput = onInput;
+      if (styling) pinStyler($('#styler'), st(), next => { d.pin = next; restyle(); }, {
+        reset: d.pin ? `Use the standard ${catOf(d.cat || 'other').name.toLowerCase()} pin` : '',
+        onReset: () => { d.pin = null; draw(); },
+      });
+      if (showMap) {
+        Maps.picker($('#f-map'), { loc: d.loc, near, style: st(), onPick: loc => { d.loc = loc; $('#f-unpin').hidden = false; } })
+          .then(p => { pick = p; }, oops);
+      }
     };
+    function restyle() {
+      const prev = $('#pin-prev');
+      if (prev) prev.innerHTML = Maps.pinHtml(st(), { scale: 0.75 });
+      if (pick) pick.restyle(st());
+    }
     const grab = () => {
       d.name = $('#f-name').value; d.link = $('#f-link').value; d.address = $('#f-addr').value; d.notes = $('#f-notes').value;
       if ($('#f-where')) d.where = $('#f-where').value;
     };
+    function onInput(e) {
+      if (e.target.id !== 'f-addr') return;
+      clearTimeout(findT);
+      const q = e.target.value;
+      const box = $('#f-sugs');
+      if (q.trim().length < 3) { box.hidden = true; return; }
+      findT = setTimeout(async () => {
+        try { sugs = await Maps.search(q, near); } catch (err) { sugs = []; }
+        if (!$('#f-sugs') || $('#f-addr').value !== q) return;
+        box.innerHTML = sugs.length ? sugs.map((x, n) => `<button type="button" data-sug="${n}"><b>${esc(x.title)}</b>${x.sub ? `<small>${esc(x.sub)}</small>` : ''}</button>`).join('')
+          : '<p class="hint">No places found — you can tap the map instead.</p>';
+        box.hidden = false;
+      }, 420);
+    }
     async function onClick(e) {
+      if (e.target.closest('#styler')) return;
+      const sg = e.target.closest('[data-sug]');
+      if (sg) {
+        grab();
+        const x = sugs[+sg.dataset.sug];
+        d.address = x.full; d.loc = { lat: x.lat, lng: x.lng }; showMap = true;
+        if (!d.name.trim()) d.name = x.title;
+        draw();
+        return;
+      }
       const c = e.target.closest('[data-c]');
       if (c) { grab(); d.cat = c.dataset.c; draw(); return; }
       if (e.target.closest('#f-must')) { grab(); d.must = !d.must; draw(); return; }
       if (e.target.closest('#f-nophoto')) { grab(); d.photo = ''; draw(); return; }
       if (e.target.closest('#f-pic')) { grab(); const p = await pickPhoto(); if (p) { d.photo = p; draw(); } return; }
+      if (e.target.closest('#f-style')) { grab(); styling = !styling; draw(); return; }
+      if (e.target.closest('#f-drop')) { grab(); showMap = true; draw(); return; }
+      if (e.target.closest('#f-unpin')) { grab(); d.loc = null; showMap = false; draw(); return; }
       if (e.target.closest('#f-save')) {
         grab();
         if (!d.name.trim()) { $('#f-name').focus(); return toast('Give it a name.'); }
         let link = d.link.trim();
         if (link && !/^https?:\/\//i.test(link)) link = 'https://' + link;
-        const out = { cat: d.cat || 'other', name: d.name.trim(), photo: d.photo || '', link, address: d.address.trim(), notes: d.notes.trim(), must: !!d.must };
+        const out = {
+          cat: d.cat || 'other', name: d.name.trim(), photo: d.photo || '', link, address: d.address.trim(), notes: d.notes.trim(), must: !!d.must,
+          loc: d.loc ? { lat: +d.loc.lat.toFixed(6), lng: +d.loc.lng.toFixed(6) } : null, pin: d.pin || null,
+        };
         if (!trip) out.where = d.where.trim();
         if (d.id) out.id = d.id;
         e.target.disabled = true;
@@ -742,6 +843,98 @@
     }
     draw();
     if (isNew) setTimeout(() => { const n = $('#f-name'); if (n) n.focus(); }, 250);
+  }
+
+  // Pin color / shape / emoji picker. Draws into el; onChange(style) on each change.
+  // opts: { reset: label for "back to standard", onReset }
+  function pinStyler(el, style, onChange, opts = {}) {
+    let cur = { ...style };
+    const draw = () => {
+      el.innerHTML = `<div class="sty-label">Color</div>
+        <div class="sty-colors">${Maps.COLORS.map(c => `<button type="button" class="sw-dot ${cur.color.toUpperCase() === c ? 'on' : ''}" data-col="${c}" style="background:${c}" aria-label="Color ${c}"></button>`).join('')}
+          <label class="sw-dot custom" aria-label="Any color"><input type="color" data-colin value="${esc(cur.color.toLowerCase())}"></label></div>
+        <div class="sty-label">Shape</div>
+        <div class="sty-shapes">${Maps.SHAPES.map(sh => `<button type="button" class="${cur.shape === sh ? 'on' : ''}" data-shape="${sh}" aria-label="${sh}">${Maps.pinHtml({ ...cur, shape: sh }, { scale: 0.7 })}</button>`).join('')}</div>
+        <div class="sty-label">Emoji</div>
+        <div class="sty-emoji">${Maps.EMOJI.map(x => `<button type="button" class="${cur.emoji === x ? 'on' : ''}" data-emo="${x}">${x}</button>`).join('')}</div>
+        <input class="input sty-own" data-emoin placeholder="Or type any emoji" autocomplete="off">
+        ${opts.reset ? `<button type="button" class="linkbtn small-link" data-reset>${esc(opts.reset)}</button>` : ''}`;
+    };
+    el.onclick = e => {
+      e.stopPropagation();
+      const b = e.target.closest('[data-col],[data-shape],[data-emo],[data-reset]');
+      if (!b) return;
+      if (b.dataset.reset !== undefined) { opts.onReset && opts.onReset(); return; }
+      if (b.dataset.col) cur.color = b.dataset.col;
+      if (b.dataset.shape) cur.shape = b.dataset.shape;
+      if (b.dataset.emo) cur.emoji = b.dataset.emo;
+      draw(); onChange({ ...cur });
+    };
+    el.oninput = e => {
+      e.stopPropagation();
+      if (e.target.dataset.colin !== undefined) { cur.color = e.target.value.toUpperCase(); onChange({ ...cur }); }
+      if (e.target.dataset.emoin !== undefined) {
+        const v = e.target.value.trim();
+        if (!v) return;
+        const seg = window.Intl && Intl.Segmenter ? [...new Intl.Segmenter().segment(v)].map(x => x.segment) : [...v];
+        cur.emoji = seg[seg.length - 1];
+        onChange({ ...cur });
+      }
+    };
+    el.onchange = e => { if (e.target.dataset.colin !== undefined) draw(); };
+    draw();
+  }
+
+  // Category pin defaults for a trip (editors).
+  function pinDefaultsSheet(t) {
+    let open = null, saveT = null;
+    const draw = () => {
+      t = tripById(t.id);
+      if (!t) return closeSheet();
+      openSheet(`<div class="sheet-head"><h2>Map pins</h2><button class="btn quiet" data-act="close">Done</button></div>
+        <p class="hint" style="margin-top:-6px">The pin each kind of idea gets on this trip’s map. Everyone on the trip sees these. You can still style any single pin when editing an idea.</p>
+        <div class="menu tight">${orderedCats().map(c => `<button data-pc="${c.id}" class="${open === c.id ? 'open' : ''}">
+            <span class="menu-pin">${Maps.pinHtml(Maps.styleFor({ cat: c.id }, t), { scale: 0.7 })}</span>${c.name}
+            ${t.pins && t.pins[c.id] ? '<span class="menu-sub">Custom</span>' : ''}</button>
+          ${open === c.id ? '<div class="styler in-menu" id="styler"></div>' : ''}`).join('')}</div>`, e => {
+        const b = e.target.closest('[data-pc]');
+        if (b) { open = open === b.dataset.pc ? null : b.dataset.pc; draw(); }
+      });
+      if (open) {
+        const cat = open;
+        pinStyler($('#styler'), Maps.styleFor({ cat }, t), next => {
+          const btn = sheet.querySelector(`[data-pc="${cat}"] .menu-pin`);
+          if (btn) btn.innerHTML = Maps.pinHtml(next, { scale: 0.7 });
+          clearTimeout(saveT);
+          saveT = setTimeout(() => API.saveTrip(t.id, { pins: { ...(t.pins || {}), [cat]: next } }).catch(oops), 500);
+        }, {
+          reset: t.pins && t.pins[cat] ? 'Back to the standard pin' : '',
+          onReset: async () => {
+            const pins = { ...(t.pins || {}) };
+            delete pins[cat];
+            try { await API.saveTrip(t.id, { pins }); setTimeout(draw, 80); } catch (err) { oops(err); }
+          },
+        });
+      }
+    };
+    draw();
+  }
+
+  // Look up an idea's address and put it on the map.
+  async function findOnMap(trip, i) {
+    const near = trip ? Maps.centerOf(S.ideas[trip.id] || []) || await Maps.placeCenter(trip.place) : null;
+    let hits = [];
+    try { hits = await Maps.search(i.address || i.name, near); } catch (e) {}
+    if (!hits.length && (trip && trip.place || i.where)) {
+      try { hits = await Maps.search(`${i.address || i.name}, ${trip ? trip.place : i.where}`); } catch (e) {}
+    }
+    if (!hits.length) { toast('Couldn’t find that spot — edit the idea to place it on the map.', 3200); return false; }
+    const loc = { lat: +hits[0].lat.toFixed(6), lng: +hits[0].lng.toFixed(6) };
+    try {
+      trip ? await API.saveIdea(trip.id, { id: i.id, loc }) : await API.saveSomeday({ id: i.id, loc });
+      toast('On the map 📍');
+      return true;
+    } catch (e) { oops(e); return false; }
   }
 
   // ---------- people + invites ----------
@@ -816,6 +1009,7 @@
       <div class="menu">
         <button data-m="invite">${icon('share')} Invite friends</button>
         ${edit ? `<button data-m="details">${icon('edit')} Trip name, place, dates & photo</button>` : ''}
+        ${edit ? `<button data-m="pins">${icon('pin')} Map pins <span class="menu-sub">The pin each kind of idea gets</span></button>` : ''}
         <button data-m="look">${icon('palette')} Trip look ${t.look ? `<span class="menu-sub">${keep ? 'Using my own' : 'Shared look on'}</span>` : '<span class="menu-sub">None — everyone sees their own</span>'}</button>
         <button data-m="people">${icon('person-plus')} Who’s going</button>
         ${own ? `<button data-m="delete" class="danger-row">Delete trip</button>` : `<button data-m="leave" class="danger-row">Leave trip</button>`}
@@ -826,6 +1020,7 @@
       if (k === 'invite') inviteSheet(t);
       else if (k === 'details') tripSheet(t);
       else if (k === 'look') tripLookSheet(t);
+      else if (k === 'pins') pinDefaultsSheet(t);
       else if (k === 'people') peopleSheet(t);
       else if (k === 'leave') {
         if (!(await ask('Leave this trip?', 'You won’t see it anymore unless someone invites you again.', 'Leave', { danger: true }))) return;
@@ -897,14 +1092,16 @@
         <div><h1>Someday ☁️</h1><p class="sub">Places you’d love to go, not tied to a trip yet.</p></div>
         <button class="plus-btn" id="add-s" aria-label="Add a someday idea">${icon('plus')}</button>
       </div>
-      ${all.length ? `${chipsHtml(all, counts, 0)}
-      <div class="ideas">${shown.map(i => ideaCard(i, null)).join('')}</div>` : `<div class="empty">
+      ${all.length ? `${modeSwitch('some')}${chipsHtml(all, counts, 0)}
+      ${modeOf('some') === 'map' ? mapSection(shown, null, true) : `<div class="ideas">${shown.map(i => ideaCard(i, null)).join('')}</div>`}` : `<div class="empty">
         <div class="empty-emoji">☁️</div><h2>Your someday list</h2>
         <p>Saw a dreamy hotel or a restaurant you have to try one day? Save it here, then move it into a trip when it’s time.</p>
       </div>`}`;
     view.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { ui.cat = b.dataset.cat; render(); });
     view.querySelectorAll('[data-idea]').forEach(b => b.onclick = () => ideaDetail(null, all.find(i => i.id === b.dataset.idea)));
     sortableChips();
+    bindMode('some');
+    if (modeOf('some') === 'map') bindMap('someday:' + ui.cat, shown, null, null, i => ideaDetail(null, i));
     $('#add-s').onclick = () => ideaSheet({ trip: null, item: { cat: ui.cat === 'all' ? '' : ui.cat } });
   }
 

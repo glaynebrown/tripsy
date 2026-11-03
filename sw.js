@@ -1,10 +1,10 @@
 /* Lets the app open fast on a weak connection.
    App files: network first, so an update you upload shows up right away.
-   Firebase SDK and fonts: saved copy first -- those never change.
+   Firebase SDK, fonts and the map library: saved copy first -- those never change.
    Everything else (the database) goes straight to the network. */
-const APP_CACHE = 'tr-app-v3';
+const APP_CACHE = 'tr-app-v5';
 const APP_FILES = [
-  './', 'index.html', 'styles.css', 'app.js', 'themes.js', 'store.js', 'demo.js',
+  './', 'index.html', 'styles.css', 'app.js', 'themes.js', 'store.js', 'demo.js', 'map.js',
   'firebase-config.js', 'manifest.json', 'icon-192.png', 'apple-touch-icon.png',
 ];
 const HOME = new URL('./', self.location).href;
@@ -25,7 +25,7 @@ self.addEventListener('fetch', event => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = req.url;
-  const forever = url.startsWith('https://www.gstatic.com/firebasejs/') || url.startsWith('https://fonts.g');
+  const forever = url.startsWith('https://www.gstatic.com/firebasejs/') || url.startsWith('https://fonts.g') || url.startsWith('https://cdnjs.cloudflare.com/');
   if (forever) {
     event.respondWith(caches.match(req).then(hit => hit || fetch(req).then(res => {
       const copy = res.clone();

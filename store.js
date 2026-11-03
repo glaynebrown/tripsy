@@ -7,7 +7,7 @@
      trips/{tid}                 { name, place, emoji, start, end, cover (photo), coverPos {x, y}, owner, members [uids],
                                    roles {uid: 'edit'|'view'}, people {uid: {name, photo}},
                                    code (e.g. CHINA-7K2), joinRole, look (shared look or null) }
-     trips/{tid}/ideas/{id}      { cat, name, photo, link, address, notes, must, by, createdAt }
+     trips/{tid}/ideas/{id}      { cat, name, photo, link, address, notes, must, loc {lat, lng}, pin {color, emoji, shape}, by, createdAt }
      codes/{CODE}                { tid, code, role } -- CODE is the trip code without the dash
 
    firestore.rules is what keeps each trip to its own people. */
@@ -129,7 +129,7 @@ const Store = (() => {
     await batch.commit();
     return ref.id;
   }
-  // name, place, emoji, start, end, cover, coverPos, look -- anyone who can edit
+  // name, place, emoji, start, end, cover, coverPos, look, pins -- anyone who can edit
   const saveTrip = (tid, patch) => T(tid).update(patch);
   // owner only
   const setRole = (tid, who, role) => T(tid).update({ ['roles.' + who]: role });

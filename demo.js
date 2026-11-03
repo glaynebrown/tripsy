@@ -6,7 +6,7 @@
    a "View as" switch to check it from a friend's side. */
 
 const Demo = (() => {
-  const KEY = 'tr-demo1';
+  const KEY = 'tr-demo2';
   let db = null;
   let as = 'izzy';
   let cb = null;
@@ -56,18 +56,18 @@ const Demo = (() => {
       },
       ideas: {
         amalfi: [
-          idea('sights', 'Path of the Gods hike', { photo: pic('🥾', '#F8E7C4', '#CFE3D8'), notes: 'Go early morning — bring water + good shoes. Ends above Positano.', must: true, address: 'Bomerano, Agerola' }),
-          idea('food', 'Da Adolfo', { photo: pic('🐟', '#D7EAF2', '#F7E6C9'), notes: 'Beach restaurant you get to by little boat! Reserve ahead.', link: 'https://www.daadolfo.com/', by: 'maddie', must: true }),
-          idea('food', 'Lemon granita stand', { photo: pic('🍋', '#FFF2B8', '#F9D9C6'), notes: 'Anywhere along the main road in Amalfi town.', by: 'soph' }),
-          idea('stay', 'Hotel Poseidon', { photo: pic('🏨', '#F6DCD2', '#E7D6F0'), notes: 'Pool terrace with the view. Maybe split a suite?', link: 'https://www.hotelposeidonpositano.it/', address: 'Via Pasitea 148, Positano' }),
-          idea('do', 'Boat day to Capri', { photo: pic('⛵', '#CFE5F5', '#E9DDF6'), notes: 'Private boat split 4 ways is about the same as the ferry.', by: 'maddie', must: true }),
-          idea('shop', 'Sandal maker in Positano', { photo: pic('👡', '#F3E2D3', '#F9EAD8'), notes: 'Custom leather sandals made while you wait', by: 'soph' }),
-          idea('sights', 'Ravello gardens', { photo: pic('🌸', '#F6D9E6', '#E3EBD3'), notes: 'Villa Rufolo + Villa Cimbrone', by: 'izzy' }),
+          idea('sights', 'Path of the Gods hike', { loc: { lat: 40.6303, lng: 14.5408 },  photo: pic('🥾', '#F8E7C4', '#CFE3D8'), notes: 'Go early morning — bring water + good shoes. Ends above Positano.', must: true, address: 'Bomerano, Agerola' }),
+          idea('food', 'Da Adolfo', { loc: { lat: 40.6197, lng: 14.4686 },  photo: pic('🐟', '#D7EAF2', '#F7E6C9'), notes: 'Beach restaurant you get to by little boat! Reserve ahead.', link: 'https://www.daadolfo.com/', by: 'maddie', must: true }),
+          idea('food', 'Lemon granita stand', { loc: { lat: 40.6340, lng: 14.6027 },  photo: pic('🍋', '#FFF2B8', '#F9D9C6'), notes: 'Anywhere along the main road in Amalfi town.', by: 'soph' }),
+          idea('stay', 'Hotel Poseidon', { loc: { lat: 40.6286, lng: 14.4880 },  photo: pic('🏨', '#F6DCD2', '#E7D6F0'), notes: 'Pool terrace with the view. Maybe split a suite?', link: 'https://www.hotelposeidonpositano.it/', address: 'Via Pasitea 148, Positano' }),
+          idea('do', 'Boat day to Capri', { loc: { lat: 40.5507, lng: 14.2426 },  photo: pic('⛵', '#CFE5F5', '#E9DDF6'), notes: 'Private boat split 4 ways is about the same as the ferry.', by: 'maddie', must: true }),
+          idea('shop', 'Sandal maker in Positano', { loc: { lat: 40.6281, lng: 14.4850 }, pin: { color: '#E8C083', emoji: '👡', shape: 'heart' },  photo: pic('👡', '#F3E2D3', '#F9EAD8'), notes: 'Custom leather sandals made while you wait', by: 'soph' }),
+          idea('sights', 'Ravello gardens', { loc: { lat: 40.6492, lng: 14.6115 },  photo: pic('🌸', '#F6D9E6', '#E3EBD3'), notes: 'Villa Rufolo + Villa Cimbrone', by: 'izzy' }),
         ],
         china: [
-          idea('sights', 'Mutianyu Great Wall', { photo: pic('🏯', '#F4DCCB', '#DCE6F2'), notes: 'Less crowded section — toboggan ride down!', must: true, by: 'maddie' }),
-          idea('food', 'Peking duck at Siji Minfu', { photo: pic('🦆', '#F6E1C8', '#F2D3D0'), by: 'maddie' }),
-          idea('sights', 'Chengdu Panda Base', { photo: pic('🐼', '#E2EEDC', '#F1F1F1'), notes: 'Go right at opening when they’re most active', must: true }),
+          idea('sights', 'Mutianyu Great Wall', { loc: { lat: 40.4319, lng: 116.5704 },  photo: pic('🏯', '#F4DCCB', '#DCE6F2'), notes: 'Less crowded section — toboggan ride down!', must: true, by: 'maddie' }),
+          idea('food', 'Peking duck at Siji Minfu', { loc: { lat: 39.9230, lng: 116.4040 },  photo: pic('🦆', '#F6E1C8', '#F2D3D0'), by: 'maddie' }),
+          idea('sights', 'Chengdu Panda Base', { loc: { lat: 30.7330, lng: 104.1460 },  photo: pic('🐼', '#E2EEDC', '#F1F1F1'), notes: 'Go right at opening when they’re most active', must: true }),
           idea('do', 'The Bund at night', { photo: pic('🌃', '#D9D6F2', '#F2D7E6'), address: 'The Bund, Shanghai' }),
         ],
         nash: [
@@ -76,14 +76,14 @@ const Demo = (() => {
           idea('do', 'Broadway honky tonks', { photo: pic('🎸', '#EED8F4', '#F9D9DE') }),
         ],
         paris: [
-          idea('food', 'Café de Flore', { photo: pic('☕', '#EFE0D3', '#F4E4EE'), by: 'ava' }),
-          idea('sights', 'Musée de l’Orangerie', { photo: pic('🪷', '#DDE9F4', '#E6F0DE'), notes: 'Monet water lilies', by: 'ava', must: true }),
+          idea('food', 'Café de Flore', { loc: { lat: 48.8541, lng: 2.3326 },  photo: pic('☕', '#EFE0D3', '#F4E4EE'), by: 'ava' }),
+          idea('sights', 'Musée de l’Orangerie', { loc: { lat: 48.8638, lng: 2.3226 },  photo: pic('🪷', '#DDE9F4', '#E6F0DE'), notes: 'Monet water lilies', by: 'ava', must: true }),
         ],
       },
       someday: {
         izzy: [
-          { id: newId(), cat: 'stay', name: 'Glass igloo in Finland', where: 'Lapland, Finland', notes: 'Northern lights from bed!!', photo: pic('🌌', '#D6DDF6', '#E6D6F2'), createdAt: now - 4e8 },
-          { id: newId(), cat: 'sights', name: 'Lavender fields', where: 'Provence, France', notes: 'Late June – July', photo: pic('💜', '#E7DDF6', '#F4E6EF'), createdAt: now - 3e8 },
+          { id: newId(), cat: 'stay', name: 'Glass igloo in Finland', where: 'Lapland, Finland', loc: { lat: 68.43, lng: 27.42 }, notes: 'Northern lights from bed!!', photo: pic('🌌', '#D6DDF6', '#E6D6F2'), createdAt: now - 4e8 },
+          { id: newId(), cat: 'sights', name: 'Lavender fields', where: 'Provence, France', loc: { lat: 43.83, lng: 5.78 }, notes: 'Late June – July', photo: pic('💜', '#E7DDF6', '#F4E6EF'), createdAt: now - 3e8 },
           { id: newId(), cat: 'food', name: 'Sushi omakase', where: 'Tokyo, Japan', createdAt: now - 2e8 },
         ],
         maddie: [], soph: [], ava: [],

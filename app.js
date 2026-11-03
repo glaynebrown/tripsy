@@ -154,10 +154,11 @@
   // ---------- sheet ----------
   const sheetWrap = $('#sheet-wrap');
   const sheet = $('#sheet');
-  function openSheet(html, onClick) {
+  function openSheet(html, onClick, keepScroll) {
+    const top = keepScroll && !sheetWrap.hidden ? sheet.scrollTop : 0;
     sheet.innerHTML = `<div class="grab"></div>${html}`;
     sheetWrap.hidden = false;
-    sheet.scrollTop = 0;
+    sheet.scrollTop = top;
     sheet.onclick = onClick || null;
     sheet.oninput = null;
     sheet.onchange = null;
@@ -610,6 +611,7 @@
   function viewTrip(tid, sub) {
     const t = tripById(tid);
     if (t && sub === 'todo') return viewTodos(t);
+    if (t && sub === 'costs') return viewCosts(t);
     if (!t) {
       view.innerHTML = `<a class="back" href="#/trips">${icon('back')} Trips</a><div class="empty"><h2>Trip not found</h2><p>You may have left it, or it was deleted.</p></div>`;
       return;
@@ -642,7 +644,7 @@
             <span>${t.members.length === 1 ? 'Just you so far' : t.members.length + ' going'}</span>
             ${edit ? '' : '<span class="tag">View only</span>'}
           </button>
-          <div class="hero-pills"><a class="pill" href="#/t/${esc(t.id)}/todo">✅ ${todoLabel(t)}</a></div>
+          <div class="hero-pills"><a class="pill" href="#/t/${esc(t.id)}/todo">✅ ${todoLabel(t)}</a><a class="pill" href="#/t/${esc(t.id)}/costs">💸 ${costLabel(t)}</a></div>
         </div>
       </section>
       ${t.look && (S.profile.keepMine || {})[t.id] ? `<p class="look-note">${icon('palette')} You’re seeing your own look here. <button class="linkbtn" id="use-look">Use the trip’s look</button></p>` : ''}
@@ -1411,6 +1413,316 @@
       e.target.closest('.pick').classList.toggle('on', e.target.checked);
       $('#st-go').textContent = `Add ${picked.size} to-do${picked.size === 1 ? '' : 's'}`;
     };
+  }
+
+  // ---------- costs ----------
+  // Rates come free from Frankfurter (European Central Bank). The rest you type the rate for.
+  const RATED = ['USD', 'EUR', 'GBP', 'CAD', 'MXN', 'JPY', 'CNY', 'KRW', 'THB', 'AUD', 'NZD', 'CHF', 'HKD', 'SGD', 'INR', 'IDR', 'PHP', 'MYR', 'ISK', 'NOK', 'SEK', 'DKK', 'CZK', 'HUF', 'PLN', 'RON', 'TRY', 'ILS', 'ZAR', 'BRL'];
+  const OTHER_CURS = ['AED', 'ARS', 'CLP', 'COP', 'CRC', 'DOP', 'EGP', 'FJD', 'JMD', 'KES', 'MAD', 'PEN', 'TWD', 'VND'];
+  const COST_EMOJI = ['🍽️', '☕', '🍸', '🏨', '✈️', '🚆', '🚕', '⛵', '⛽', '🎟️', '🛍️', '🎁', '💊', '🧾'];
+  const usdFmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+  const usd = n => usdFmt.format(Math.round((n || 0) * 100) / 100);
+  const usdShort = n => (Math.abs(n) >= 1000 ? '$' + Math.round(n).toLocaleString('en-US') : usd(n));
+  function curFmt(n, cur) {
+    try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur, currencyDisplay: 'narrowSymbol' }).format(n); } catch (e) { return `${n} ${cur}`; }
+  }
+  const curSymbol = cur => curFmt(0, cur).replace(/[\d.,\s]/g, '') || cur;
+  const round2 = n => Math.round(n * 100) / 100;
+  const rateCache = {};
+  async function rateFor(cur, date) {
+    if (cur === 'USD') return 1;
+    if (!RATED.includes(cur)) return null;
+    const day = !date || date >= todayIso() ? 'latest' : date;
+    const key = cur + day;
+    if (key in rateCache) return rateCache[key];
+    try {
+      const r = await fetch(`https://api.frankfurter.dev/v1/${day}?from=${cur}&to=USD`);
+      const j = await r.json();
+      rateCache[key] = j && j.rates && j.rates.USD ? j.rates.USD : null;
+    } catch (e) { return null; }
+    return rateCache[key];
+  }
+
+  // everyone who can pay or share: people on the trip, plus guests
+  const guestsOf = t => Object.entries(t.guests || {}).map(([id, g]) => ({ key: 'g:' + id, name: g.name, guest: true }));
+  const costPeople = t => [...t.members.map(u => ({ key: u, name: u === S.me ? 'You' : nameIn(t, u) })), ...guestsOf(t)];
+  const whoName = (t, k) => (k && k.startsWith('g:') ? ((t.guests || {})[k.slice(2)] || {}).name || 'Guest' : nameIn(t, k));
+  const whoAv = (t, k) => (k && k.startsWith('g:') ? `<span class="av tiny guest" title="${esc(whoName(t, k))}">${esc(first(whoName(t, k)))}</span>` : avatar(t, k, 'tiny'));
+  // USD each person owes for one expense
+  function sharesOf(c) {
+    const out = {};
+    if (c.custom) {
+      for (const k of c.among) out[k] = round2((+c.custom[k] || 0) * (c.rate || 1));
+      return out;
+    }
+    const n = c.among.length || 1;
+    const cents = Math.round((c.usd || 0) * 100);
+    const each = Math.floor(cents / n);
+    c.among.forEach((k, i) => { out[k] = (each + (i < cents - each * n ? 1 : 0)) / 100; });
+    return out;
+  }
+  function balances(t) {
+    const net = {};
+    const add = (k, v) => { net[k] = round2((net[k] || 0) + v); };
+    for (const c of S.costs[t.id] || []) {
+      if (c.kind === 'settle') { add(c.from, c.usd); add(c.to, -c.usd); continue; }
+      add(c.paidBy, c.usd || 0);
+      const sh = sharesOf(c);
+      for (const k in sh) add(k, -sh[k]);
+    }
+    return net;
+  }
+  // fewest payments that square everyone up
+  function whoOwes(net) {
+    const pos = Object.entries(net).filter(([, v]) => v > 0.004).map(([k, v]) => [k, v]).sort((a, b) => b[1] - a[1]);
+    const neg = Object.entries(net).filter(([, v]) => v < -0.004).map(([k, v]) => [k, -v]).sort((a, b) => b[1] - a[1]);
+    const out = [];
+    let i = 0, j = 0;
+    while (i < pos.length && j < neg.length) {
+      const amt = round2(Math.min(pos[i][1], neg[j][1]));
+      if (amt >= 0.01) out.push({ from: neg[j][0], to: pos[i][0], usd: amt });
+      pos[i][1] = round2(pos[i][1] - amt); neg[j][1] = round2(neg[j][1] - amt);
+      if (pos[i][1] < 0.01) i++;
+      if (neg[j][1] < 0.01) j++;
+    }
+    return out;
+  }
+  const expensesOf = t => (S.costs[t.id] || []).filter(c => c.kind !== 'settle');
+  function costLabel(t) {
+    const total = expensesOf(t).reduce((a, c) => a + (c.usd || 0), 0);
+    return total ? usdShort(total) : 'Costs';
+  }
+
+  function viewCosts(t) {
+    const edit = canEdit(t);
+    const all = (S.costs[t.id] || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || 0) - (a.createdAt || 0));
+    const exp = all.filter(c => c.kind !== 'settle');
+    const total = exp.reduce((a, c) => a + (c.usd || 0), 0);
+    const myShare = exp.reduce((a, c) => a + (sharesOf(c)[S.me] || 0), 0);
+    const myPaid = exp.filter(c => c.paidBy === S.me).reduce((a, c) => a + (c.usd || 0), 0);
+    const owes = whoOwes(balances(t));
+    let lastDay = '';
+    const rows = all.map(c => {
+      const head = c.date !== lastDay ? `<div class="cost-day">${esc(c.date ? dateRange(c.date) : 'No date')}</div>` : '';
+      lastDay = c.date;
+      if (c.kind === 'settle') return `${head}<div class="cost settle" data-cost="${esc(c.id)}"><span class="cost-emoji">💸</span>
+        <span class="cost-main"><b>${esc(whoName(t, c.from))} paid ${esc(c.to === S.me ? 'you' : whoName(t, c.to))} back</b><small>Settled up</small></span><span class="cost-amt">${usd(c.usd)}</span></div>`;
+      const n = c.among.length;
+      return `${head}<div class="cost" data-cost="${esc(c.id)}"><span class="cost-emoji">${esc(c.emoji || '🧾')}</span>
+        <span class="cost-main"><b>${esc(c.what)}</b><small>${esc(whoName(t, c.paidBy))} paid · ${c.custom ? 'custom split' : n === 1 ? 'just ' + esc(whoName(t, c.among[0])) : 'split ' + n + ' ways'}${sharesOf(c)[S.me] != null && c.paidBy !== S.me ? ' · yours ' + usd(sharesOf(c)[S.me]) : ''}</small></span>
+        <span class="cost-amt">${usd(c.usd)}${c.cur !== 'USD' ? `<small>${esc(curFmt(c.amount, c.cur))}</small>` : ''}</span></div>`;
+    }).join('');
+    view.innerHTML = `<div class="back-row"><a class="back" href="#/t/${esc(t.id)}">${icon('back')} ${esc(t.name)}</a>
+        ${edit ? `<button class="plus-btn small" id="cost-add" aria-label="Add an expense">${icon('plus')}</button>` : ''}</div>
+      <div class="page-head tight-head"><div><h1>Costs 💸</h1><p class="sub">Everything in US dollars.</p></div></div>
+      ${exp.length ? `<div class="cost-sum">
+          <div><small>Trip total</small><b>${usd(total)}</b></div>
+          <div><small>Your share</small><b>${usd(myShare)}</b></div>
+          <div><small>You paid</small><b>${usd(myPaid)}</b></div>
+        </div>
+        <div class="card owes">
+          <h3>Who owes who</h3>
+          ${owes.length ? owes.map(o => `<div class="owe ${o.from === S.me || o.to === S.me ? 'mine' : ''}">
+              <span class="owe-who">${whoAv(t, o.from)} <b>${o.from === S.me ? 'You owe' : esc(whoName(t, o.from)) + ' owes'}</b> ${o.to === S.me ? 'you' : esc(whoName(t, o.to))}</span>
+              <span class="owe-amt">${usd(o.usd)}</span>
+              ${edit ? `<button class="btn soft small" data-settle="${esc(o.from)}|${esc(o.to)}|${o.usd}">Settle up</button>` : ''}
+            </div>`).join('') : '<p class="hint">Everyone’s square ✨</p>'}
+        </div>
+        <div class="costs">${rows}</div>`
+      : `<div class="empty"><div class="empty-emoji">💸</div><h2>No costs yet</h2><p>Add what you spend — the hotel, dinners, tickets — and Tripsy works out who owes who, in dollars.</p></div>`}
+      <div class="guests">
+        <span class="label">Guests</span>
+        ${guestsOf(t).map(g => `<span class="chip guest-chip">${esc(g.name)}${edit ? `<button class="leave-x small-x" data-rmguest="${esc(g.key)}" aria-label="Remove ${esc(g.name)}">×</button>` : ''}</span>`).join('') || '<span class="hint" style="margin:0">People sharing costs who aren’t on Tripsy</span>'}
+        ${edit ? '<button class="chip-btn" id="add-guest">+ Guest</button>' : ''}
+      </div>`;
+    if ($('#cost-add')) $('#cost-add').onclick = () => costSheet(t, null);
+    view.onclick = async e => {
+      const st = e.target.closest('[data-settle]');
+      if (st) {
+        const [from, to, amt] = st.dataset.settle.split('|');
+        if (!(await ask('Settle up?', `Mark that ${esc(whoName(t, from) === 'You' ? 'you' : whoName(t, from))} paid ${esc(whoName(t, to) === 'You' ? 'you' : whoName(t, to))} <b>${usd(+amt)}</b>.`, 'Mark as paid'))) return;
+        try { await API.saveCost(t.id, { kind: 'settle', from, to, usd: +amt, date: todayIso() }); toast('Settled 💸'); } catch (err) { oops(err); }
+        return;
+      }
+      const rg = e.target.closest('[data-rmguest]');
+      if (rg) {
+        const k = rg.dataset.rmguest;
+        if ((S.costs[t.id] || []).some(c => c.paidBy === k || (c.among || []).includes(k) || c.from === k || c.to === k)) return tell('Still in some costs', `${esc(whoName(t, k))} is part of some costs on this trip. Take them out of those first.`);
+        const guests = { ...(t.guests || {}) };
+        delete guests[k.slice(2)];
+        API.saveTrip(t.id, { guests }).catch(oops);
+        return;
+      }
+      if (e.target.closest('#add-guest')) { addGuest(t); return; }
+      const c = e.target.closest('[data-cost]');
+      if (!c) return;
+      const item = all.find(x => x.id === c.dataset.cost);
+      if (item.kind === 'settle') {
+        if (edit && await ask('Undo this settle-up?', `${esc(whoName(t, item.from))} paid ${esc(item.to === S.me ? 'you' : whoName(t, item.to))} ${usd(item.usd)} — remove it?`, 'Remove', { danger: true })) API.deleteCost(t.id, item.id).catch(oops);
+      } else costSheet(t, item);
+    };
+  }
+
+  async function addGuest(t, then) {
+    const name = await ask('Add a guest', 'Someone sharing costs who isn’t on Tripsy.', 'Add', { input: true, placeholder: 'Their name' });
+    if (!name || !name.trim()) return null;
+    const id = Math.random().toString(36).slice(2, 8);
+    try {
+      await API.saveTrip(t.id, { guests: { ...(t.guests || {}), [id]: { name: name.trim().slice(0, 30) } } });
+      t.guests = { ...(t.guests || {}), [id]: { name: name.trim().slice(0, 30) } };
+      if (then) then('g:' + id);
+      return 'g:' + id;
+    } catch (e) { oops(e); return null; }
+  }
+
+  function costSheet(t, c) {
+    const edit = canEdit(t);
+    const isNew = !c;
+    const people = () => costPeople(t);
+    const d = c ? { ...c, among: [...c.among], custom: c.custom ? { ...c.custom } : null }
+      : { what: '', emoji: '🍽️', amount: '', cur: ls.get('tr-cur-' + t.id, 'USD'), rate: null, date: todayIso(), paidBy: S.me, among: people().map(p => p.key), custom: null, note: '' };
+    let mode = d.custom ? 'custom' : 'equal';
+    let rate = c ? c.rate : null, rateState = c ? 'ok' : 'loading', manual = c && !RATED.includes(c.cur);
+    if (!edit) {
+      const sh = sharesOf(c);
+      openSheet(`<div class="sheet-head"><h2>${esc(c.emoji || '🧾')} ${esc(c.what)}</h2><button class="btn quiet" data-act="close">Close</button></div>
+        <p class="cost-big">${usd(c.usd)}${c.cur !== 'USD' ? ` <small>${esc(curFmt(c.amount, c.cur))}</small>` : ''}</p>
+        <p class="hint">${esc(whoName(t, c.paidBy))} paid · ${esc(dateRange(c.date))}</p>
+        <div class="people">${Object.entries(sh).map(([k, v]) => `<div class="person">${whoAv(t, k)}<div class="person-main"><b>${esc(whoName(t, k))}</b></div><b>${usd(v)}</b></div>`).join('')}</div>
+        ${c.note ? `<p class="detail-notes">${esc(c.note)}</p>` : ''}`);
+      return;
+    }
+    async function loadRate() {
+      if (manual) return;
+      rateState = 'loading';
+      const r = await rateFor(d.cur, d.date);
+      if (r) { rate = r; rateState = 'ok'; } else { rateState = 'none'; manual = true; }
+      if (!sheetWrap.hidden) draw();
+    }
+    const amt = () => parseFloat(String(d.amount).replace(/[^0-9.]/g, '')) || 0;
+    const customSum = () => d.among.reduce((a, k) => a + (parseFloat((d.custom || {})[k]) || 0), 0);
+    function convLine() {
+      if (d.cur === 'USD') return '';
+      if ((rateState === 'loading' || !rate) && !manual) return '<p class="hint conv">Getting the exchange rate…</p>';
+      if (manual) return `<div class="row conv"><span class="hint" style="margin:0">1 ${esc(d.cur)} = $</span><input class="input rate-in" id="c-rate" inputmode="decimal" value="${rate ? esc(String(rate)) : ''}" placeholder="0.00"><span class="hint" style="margin:0" id="c-usd">${rate && amt() ? '≈ ' + usd(amt() * rate) : ''}</span></div>
+        <p class="hint">${RATED.includes(d.cur) ? 'Couldn’t get the rate right now — type it in.' : 'Type the exchange rate for this one.'}</p>`;
+      return `<p class="hint conv" id="c-usd">${amt() ? '≈ <b>' + usd(amt() * rate) + '</b> · ' : ''}1 ${esc(d.cur)} = $${rate.toFixed(4)}</p>`;
+    }
+    function splitHtml() {
+      const ps = people();
+      const chips = `<div class="check-chips">${ps.map(p => `<button type="button" class="chip ${d.among.includes(p.key) ? 'on' : ''}" data-among="${esc(p.key)}">${whoAv(t, p.key)} ${esc(p.name)}</button>`).join('')}<button type="button" class="chip-btn" data-guest="among">+ Guest</button></div>`;
+      if (mode === 'equal') {
+        const each = d.among.length && amt() ? amt() / d.among.length : 0;
+        return chips + (each ? `<p class="hint">${esc(curFmt(round2(each), d.cur))} each${d.cur !== 'USD' && rate ? ' (≈ ' + usd(each * rate) + ')' : ''}</p>` : '');
+      }
+      const left = round2(amt() - customSum());
+      return chips + `<div class="custom-split">${d.among.map(k => `<label class="cs-row">${whoAv(t, k)}<span>${esc(whoName(t, k))}</span>
+          <span class="money-in"><span>${esc(curSymbol(d.cur))}</span><input class="input" inputmode="decimal" data-cs="${esc(k)}" value="${esc((d.custom || {})[k] ?? '')}" placeholder="0"></span></label>`).join('')}</div>
+        <p class="hint ${Math.abs(left) < 0.01 ? 'good' : 'warn'}" id="cs-left">${!amt() ? 'Add the amount first.' : Math.abs(left) < 0.01 ? 'Adds up ✓' : left > 0 ? esc(curFmt(left, d.cur)) + ' left to split' : esc(curFmt(-left, d.cur)) + ' too much'}</p>`;
+    }
+    const draw = () => {
+      openSheet(`<div class="sheet-head"><h2>${isNew ? 'New expense' : 'Edit expense'}</h2><button class="btn quiet" data-act="close">Cancel</button></div>
+        <div class="emoji-pick">${COST_EMOJI.map(x => `<button type="button" class="${d.emoji === x ? 'on' : ''}" data-cemo="${x}">${x}</button>`).join('')}</div>
+        <div class="field"><input class="input" id="c-what" value="${esc(d.what)}" placeholder="Dinner, hotel, boat tickets…" aria-label="What was it"></div>
+        <div class="row amount-row">
+          <span class="money-in grow"><span>${esc(curSymbol(d.cur))}</span><input class="input" id="c-amt" inputmode="decimal" value="${esc(d.amount)}" placeholder="0.00" aria-label="Amount"></span>
+          <select class="input cur-pick" id="c-cur" aria-label="Currency">${[...RATED, ...OTHER_CURS].map(x => `<option ${x === d.cur ? 'selected' : ''}>${x}</option>`).join('')}</select>
+        </div>
+        ${convLine()}
+        <div class="field tight"><label for="c-date">Date</label><input class="input" type="date" id="c-date" value="${esc(d.date)}"></div>
+        <div class="field"><div class="label">Paid by</div>
+          <div class="check-chips">${people().map(p => `<button type="button" class="chip ${d.paidBy === p.key ? 'on' : ''}" data-paid="${esc(p.key)}">${whoAv(t, p.key)} ${esc(p.name)}</button>`).join('')}<button type="button" class="chip-btn" data-guest="paid">+ Guest</button></div></div>
+        <div class="field"><div class="row split-head"><div class="label">Split between</div>
+          <div class="seg"><button class="${mode === 'equal' ? 'on' : ''}" data-mode2="equal">Equally</button><button class="${mode === 'custom' ? 'on' : ''}" data-mode2="custom">Custom</button></div></div>
+          <div id="split">${splitHtml()}</div></div>
+        <input class="input" id="c-note" value="${esc(d.note)}" placeholder="Note (optional)" aria-label="Note">
+        <div class="sheet-foot"><button class="btn wide" id="c-save">${isNew ? 'Add expense' : 'Save'}</button>${isNew ? '' : '<button class="btn danger" id="c-del">Delete</button>'}</div>`, onClick, true);
+      sheet.oninput = onInput;
+      sheet.onchange = onChange;
+    };
+    const grab = () => {
+      d.what = $('#c-what').value; d.amount = $('#c-amt').value; d.date = $('#c-date').value; d.note = $('#c-note').value;
+      if ($('#c-rate')) rate = parseFloat($('#c-rate').value) || null;
+    };
+    function onInput(e) {
+      const id = e.target.id;
+      if (id === 'c-amt' || id === 'c-rate') {
+        grab();
+        const u = $('#c-usd');
+        if (u && rate) u.innerHTML = manual ? (amt() ? '≈ ' + usd(amt() * rate) : '') : `${amt() ? '≈ <b>' + usd(amt() * rate) + '</b> · ' : ''}1 ${esc(d.cur)} = $${rate.toFixed(4)}`;
+        if (mode === 'equal' || $('#cs-left')) { const sp = $('#split'); if (sp && mode === 'equal') sp.innerHTML = splitHtml(); else updateLeft(); }
+      }
+      if (e.target.dataset.cs !== undefined) {
+        d.custom = d.custom || {};
+        d.custom[e.target.dataset.cs] = e.target.value;
+        updateLeft();
+      }
+    }
+    function updateLeft() {
+      const el = $('#cs-left');
+      if (!el) return;
+      const left = round2(amt() - customSum());
+      el.className = 'hint ' + (Math.abs(left) < 0.01 ? 'good' : 'warn');
+      el.textContent = !amt() ? 'Add the amount first.' : Math.abs(left) < 0.01 ? 'Adds up ✓' : left > 0 ? curFmt(left, d.cur) + ' left to split' : curFmt(-left, d.cur) + ' too much';
+    }
+    function onChange(e) {
+      if (e.target.id === 'c-cur') { grab(); d.cur = e.target.value; ls.set('tr-cur-' + t.id, d.cur); manual = !RATED.includes(d.cur); rate = d.cur === 'USD' ? 1 : null; rateState = 'loading'; draw(); loadRate(); }
+      else if (e.target.id === 'c-date' && !manual) { grab(); loadRate(); }
+    }
+    async function onClick(e) {
+      const em = e.target.closest('[data-cemo]');
+      if (em) { grab(); d.emoji = em.dataset.cemo; draw(); return; }
+      const pd = e.target.closest('[data-paid]');
+      if (pd) { grab(); d.paidBy = pd.dataset.paid; draw(); return; }
+      const am = e.target.closest('[data-among]');
+      if (am) {
+        grab();
+        const k = am.dataset.among;
+        d.among = d.among.includes(k) ? d.among.filter(x => x !== k) : people().map(p => p.key).filter(x => x === k || d.among.includes(x));
+        draw(); return;
+      }
+      const g = e.target.closest('[data-guest]');
+      if (g) {
+        grab();
+        await addGuest(t, k => { if (g.dataset.guest === 'paid') d.paidBy = k; if (!d.among.includes(k)) d.among.push(k); });
+        draw(); return;
+      }
+      const m2 = e.target.closest('[data-mode2]');
+      if (m2) {
+        grab();
+        mode = m2.dataset.mode2;
+        if (mode === 'custom' && !d.custom) {
+          // start each person at an even share
+          const each = d.among.length && amt() ? round2(amt() / d.among.length) : '';
+          d.custom = Object.fromEntries(d.among.map(k => [k, each]));
+        }
+        draw(); return;
+      }
+      if (e.target.closest('#c-del')) {
+        if (!(await ask('Delete this expense?', `“${esc(c.what)}” will be gone for everyone.`, 'Delete', { danger: true }))) return;
+        try { await API.deleteCost(t.id, c.id); closeSheet(); } catch (err) { oops(err); }
+        return;
+      }
+      if (!e.target.closest('#c-save')) return;
+      grab();
+      if (!d.what.trim()) { $('#c-what').focus(); return toast('What was it for?'); }
+      if (!amt()) { $('#c-amt').focus(); return toast('Add the amount.'); }
+      if (!d.among.length) return toast('Pick who it’s split between.');
+      if (d.cur !== 'USD' && !rate) return toast('Add the exchange rate.');
+      if (mode === 'custom' && Math.abs(amt() - customSum()) >= 0.01) return toast('The custom amounts need to add up to the total.');
+      const r = d.cur === 'USD' ? 1 : rate;
+      const out = {
+        what: d.what.trim(), emoji: d.emoji, amount: round2(amt()), cur: d.cur, rate: r, usd: round2(amt() * r), date: d.date || todayIso(),
+        paidBy: d.paidBy, among: d.among,
+        custom: mode === 'custom' ? Object.fromEntries(d.among.map(k => [k, round2(parseFloat(d.custom[k]) || 0)])) : null,
+        note: d.note.trim(),
+      };
+      if (c) out.id = c.id;
+      e.target.disabled = true;
+      try { await API.saveCost(t.id, out); closeSheet(); toast(isNew ? 'Added 💸' : 'Saved'); } catch (err) { e.target.disabled = false; oops(err); }
+    }
+    draw();
+    if (isNew) { loadRate(); setTimeout(() => { const i = $('#c-what'); if (i) i.focus(); }, 250); }
   }
 
   // ---------- people + invites ----------

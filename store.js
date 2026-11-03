@@ -12,6 +12,10 @@
                                    time 'HH:MM'|'', order, idea (an idea's id) or text + emoji, note, by }
      trips/{tid}/todos/{id}      { title, notes, for 'all'|uid, due 'YYYY-MM-DD'|'', before (days before
                                    the trip)|null, done {uid: when}, by, createdAt }
+     trips/{tid}/costs/{id}      an expense: { what, emoji, amount, cur, rate (USD for 1 of cur), usd, date,
+                                   paidBy, among [people], custom {person: amount in cur} | null, note }
+                                   or a settle-up: { kind 'settle', from, to, usd, date }
+                                   people = a member's uid, or 'g:' + id for a guest in trip.guests
      codes/{CODE}                { tid, code, role } -- CODE is the trip code without the dash
 
    firestore.rules is what keeps each trip to its own people. */
@@ -49,7 +53,7 @@ const Store = (() => {
 
   // ---- live data ----
   // start(cb) keeps cb fed with one state object:
-  //   { me, loaded, profile, trips [], ideas {tid: []}, plan {tid: []}, todos {tid: []}, someday [] }
+  //   { me, loaded, profile, trips [], ideas {tid: []}, plan {tid: []}, todos {tid: []}, costs {tid: []}, someday [] }
   let S = null;
   let subs = {};
   let emitT = null;
@@ -71,7 +75,7 @@ const Store = (() => {
     stop();
     cb = onState;
     const me = uid();
-    S = { me, loaded: false, profile: null, trips: [], ideas: {}, plan: {}, todos: {}, someday: [] };
+    S = { me, loaded: false, profile: null, trips: [], ideas: {}, plan: {}, todos: {}, costs: {}, someday: [] };
     listen('me', U(me), s => { S.profile = s && s.exists ? s.data() : null; S.loaded = true; emit(); });
     listen('someday', U(me).collection('someday'), s => { S.someday = s ? docs(s) : []; emit(); });
     listen('trips', db.collection('trips').where('members', 'array-contains', me), s => {
@@ -80,9 +84,10 @@ const Store = (() => {
       for (const t of S.trips) listen('ideas:' + t.id, T(t.id).collection('ideas'), x => { S.ideas[t.id] = x ? docs(x) : []; emit(); });
       for (const t of S.trips) listen('plan:' + t.id, T(t.id).collection('plan'), x => { S.plan[t.id] = x ? docs(x) : []; emit(); });
       for (const t of S.trips) listen('todos:' + t.id, T(t.id).collection('todos'), x => { S.todos[t.id] = x ? docs(x) : []; emit(); });
+      for (const t of S.trips) listen('costs:' + t.id, T(t.id).collection('costs'), x => { S.costs[t.id] = x ? docs(x) : []; emit(); });
       for (const key of Object.keys(subs)) {
         const [kind, tid] = key.split(':');
-        if ((kind === 'ideas' || kind === 'plan' || kind === 'todos') && !want.has(tid)) { drop(key); delete S[kind][tid]; }
+        if (['ideas', 'plan', 'todos', 'costs'].includes(kind) && !want.has(tid)) { drop(key); delete S[kind][tid]; }
       }
       emit();
     });
@@ -138,7 +143,7 @@ const Store = (() => {
     await batch.commit();
     return ref.id;
   }
-  // name, place, emoji, start, end, cover, coverPos, look, pins, planStyle -- anyone who can edit
+  // name, place, emoji, start, end, cover, coverPos, look, pins, planStyle, guests -- anyone who can edit
   const saveTrip = (tid, patch) => T(tid).update(patch);
   // owner only
   const setRole = (tid, who, role) => T(tid).update({ ['roles.' + who]: role });
@@ -185,7 +190,7 @@ const Store = (() => {
   async function deleteTrip(tid) {
     const t = S.trips.find(x => x.id === tid);
     const ideas = [];
-    for (const sub of ['ideas', 'plan', 'todos']) ideas.push(...(await T(tid).collection(sub).get()).docs);
+    for (const sub of ['ideas', 'plan', 'todos', 'costs']) ideas.push(...(await T(tid).collection(sub).get()).docs);
     for (let i = 0; i < ideas.length; i += 400) {
       const b = db.batch();
       ideas.slice(i, i + 400).forEach(d => b.delete(d.ref));
@@ -250,6 +255,16 @@ const Store = (() => {
   const checkTodo = (tid, id, on) => T(tid).collection('todos').doc(id).update({ ['done.' + uid()]: on ? Date.now() : FV.delete() });
   const deleteTodo = (tid, id) => T(tid).collection('todos').doc(id).delete();
 
+  // ---- costs ----
+  function saveCost(tid, item) {
+    const { id, ...rest } = item;
+    const col = T(tid).collection('costs');
+    const ref = id ? col.doc(id) : col.doc();
+    if (!id) { rest.by = uid(); rest.createdAt = Date.now(); }
+    return (id ? ref.update(rest) : ref.set(rest)).then(() => ref.id);
+  }
+  const deleteCost = (tid, id) => T(tid).collection('costs').doc(id).delete();
+
   // ---- someday ----
   function saveSomeday(item) {
     const { id, ...rest } = item;
@@ -306,6 +321,6 @@ const Store = (() => {
   return {
     configured: true, onUser, signIn, signOut, start, stop, createProfile, saveProfile, setKeepMine,
     createTrip, saveTrip, setRole, setJoinRole, removePerson, newTripCode, join, leaveTrip, deleteTrip,
-    saveIdea, deleteIdea, savePlan, addPlan, movePlan, deletePlan, saveTodo, addTodos, checkTodo, deleteTodo, saveSomeday, deleteSomeday, moveToTrip, copyToSomeday, deleteAccount, uid,
+    saveIdea, deleteIdea, savePlan, addPlan, movePlan, deletePlan, saveTodo, addTodos, checkTodo, deleteTodo, saveCost, deleteCost, saveSomeday, deleteSomeday, moveToTrip, copyToSomeday, deleteAccount, uid,
   };
 })();

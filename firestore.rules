@@ -30,11 +30,11 @@ service cloud.firestore {
         && request.resource.data.roles == { (me()): 'edit' };
       allow update: if signedIn() && (
         // editors: the trip's details and its shared look
-        (editor() && changed().hasOnly(['name', 'place', 'emoji', 'start', 'end', 'cover', 'coverPos', 'look', 'pins', 'planStyle']))
+        (editor() && changed().hasOnly(['name', 'place', 'emoji', 'start', 'end', 'cover', 'coverPos', 'look', 'pins', 'planStyle', 'guests']))
         // anyone on the trip: their own name
         || (member() && changed().hasOnly(['people']) && onlyMeIn('people'))
         // the owner: people, roles, the invite code, handing the trip on
-        || (owner() && changed().hasOnly(['name', 'place', 'emoji', 'start', 'end', 'cover', 'coverPos', 'look', 'pins', 'planStyle', 'members', 'roles', 'people', 'code', 'joinRole', 'owner'])
+        || (owner() && changed().hasOnly(['name', 'place', 'emoji', 'start', 'end', 'cover', 'coverPos', 'look', 'pins', 'planStyle', 'guests', 'members', 'roles', 'people', 'code', 'joinRole', 'owner'])
             && request.resource.data.owner in request.resource.data.members)
         // join: add only yourself, with the current code and the role the owner picked
         || (!member()
@@ -63,6 +63,11 @@ service cloud.firestore {
           trip(tid).roles[me()] == 'edit'
           || (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['done'])
               && request.resource.data.done.diff(resource.data.get('done', {})).affectedKeys().hasOnly([me()])));
+      }
+      // costs + settle-ups: same as ideas
+      match /costs/{id} {
+        allow read: if signedIn() && me() in trip(tid).members;
+        allow create, update, delete: if signedIn() && me() in trip(tid).members && trip(tid).roles[me()] == 'edit';
       }
       // the day-by-day plan: same as ideas
       match /plan/{id} {

@@ -6,7 +6,7 @@
    a "View as" switch to check it from a friend's side. */
 
 const Demo = (() => {
-  const KEY = 'tr-demo4';
+  const KEY = 'tr-demo5';
   let db = null;
   let as = 'izzy';
   let cb = null;
@@ -114,6 +114,19 @@ const Demo = (() => {
         todo('Get a VPN on our phones', { before: 7, notes: 'Google, Instagram etc. are blocked there' }),
       ],
     };
+    // costs on the Amalfi trip (Ava's sister Jess is a guest)
+    out.trips.amalfi.guests = { jess: { name: 'Jess' } };
+    const cost = (what, emoji, amount, cur, rate, paidBy, among, o) => ({ id: newId(), what, emoji, amount, cur, rate, usd: Math.round(amount * rate * 100) / 100, date: '2026-10-20', paidBy, among, custom: null, note: '', by: paidBy, createdAt: now - Math.random() * 1e8, ...o });
+    const four = ['izzy', 'maddie', 'soph', 'ava'];
+    out.costs = {
+      amalfi: [
+        cost('Hotel Poseidon deposit', '🏨', 1200, 'EUR', 1.118, 'izzy', four, { date: '2026-09-28' }),
+        cost('Boat to Capri', '⛵', 600, 'EUR', 1.118, 'maddie', [...four, 'g:jess'], { date: '2026-10-12' }),
+        cost('Dinner at Da Adolfo', '🍝', 310, 'EUR', 1.118, 'soph', [...four, 'g:jess'], { date: '2026-10-14', custom: { izzy: 70, maddie: 60, soph: 60, ava: 60, 'g:jess': 60 } }),
+        cost('Train tickets', '🚆', 96, 'USD', 1, 'izzy', ['izzy', 'maddie'], { date: '2026-10-15' }),
+        { id: newId(), kind: 'settle', from: 'ava', to: 'izzy', usd: 200, date: '2026-10-18', by: 'ava', createdAt: now - 5e7 },
+      ],
+    };
     return out;
   }
   const NAMES = { izzy: 'Izzy', maddie: 'Maddie', soph: 'Sophia', ava: 'Ava' };
@@ -136,9 +149,12 @@ const Demo = (() => {
   function emit() {
     if (!cb) return;
     const trips = Object.entries(db.trips).filter(([, t]) => t.members.includes(as)).map(([id, t]) => ({ id, ...clone(t) }));
-    const ideas = {}, plan = {}, todos = {};
-    for (const t of trips) { ideas[t.id] = clone(db.ideas[t.id] || []); plan[t.id] = clone((db.plan || {})[t.id] || []); todos[t.id] = clone((db.todos || {})[t.id] || []); }
-    cb({ me: as, loaded: true, profile: db.users[as] ? clone(db.users[as]) : null, trips, ideas, plan, todos, someday: clone(db.someday[as] || []) });
+    const ideas = {}, plan = {}, todos = {}, costs = {};
+    for (const t of trips) {
+      ideas[t.id] = clone(db.ideas[t.id] || []); plan[t.id] = clone((db.plan || {})[t.id] || []);
+      todos[t.id] = clone((db.todos || {})[t.id] || []); costs[t.id] = clone((db.costs || {})[t.id] || []);
+    }
+    cb({ me: as, loaded: true, profile: db.users[as] ? clone(db.users[as]) : null, trips, ideas, plan, todos, costs, someday: clone(db.someday[as] || []) });
   }
 
   load();
@@ -275,6 +291,19 @@ const Demo = (() => {
     deleteTodo(tid, id) {
       if (!editor(tid)) return fail('You can look at this trip but not change it.');
       if (db.todos && db.todos[tid]) db.todos[tid] = db.todos[tid].filter(x => x.id !== id);
+      save(); return Promise.resolve();
+    },
+    saveCost(tid, item) {
+      if (!editor(tid)) return fail('You can look at this trip but not change it.');
+      const list = (db.costs = db.costs || {})[tid] = db.costs[tid] || [];
+      if (item.id) { const i = list.findIndex(x => x.id === item.id); if (i >= 0) list[i] = { ...list[i], ...item }; save(); return Promise.resolve(item.id); }
+      const id = newId();
+      list.push({ ...item, id, by: as, createdAt: Date.now() });
+      save(); return Promise.resolve(id);
+    },
+    deleteCost(tid, id) {
+      if (!editor(tid)) return fail('You can look at this trip but not change it.');
+      if (db.costs && db.costs[tid]) db.costs[tid] = db.costs[tid].filter(x => x.id !== id);
       save(); return Promise.resolve();
     },
     deletePlan(tid, id) {

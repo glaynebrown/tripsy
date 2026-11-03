@@ -527,3 +527,5 @@ input[type="date"].input::-webkit-date-and-time-value { text-align: left; }
 .back-row #more { border: 0; background: none; color: var(--muted); width: 40px; height: 40px; margin-right: -8px; }
 .back-row #more .icon { width: 24px; height: 24px; }
 .back-row #more:active { background: var(--softer); }
+/* Someday's description: one line across the full width, under the title and + */
+.sub.one-line { color: var(--muted); margin: -12px 0 18px; font-size: clamp(12.5px, 3.7vw, 15px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

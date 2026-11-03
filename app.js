@@ -1089,9 +1089,10 @@
     if (ui.cat !== 'all' && !counts[ui.cat]) ui.cat = 'all';
     const shown = all.filter(i => ui.cat === 'all' || (i.cat || 'other') === ui.cat);
     view.innerHTML = `<div class="page-head">
-        <div><h1>Someday ☁️</h1>${all.length ? `<div class="sub-switch">${modeSwitch('some')}</div>` : '<p class="sub">Places you’d love to go, not tied to a trip yet.</p>'}</div>
+        <div><h1>Someday ☁️</h1>${all.length ? `<div class="sub-switch">${modeSwitch('some')}</div>` : ''}</div>
         <button class="plus-btn" id="add-s" aria-label="Add a someday idea">${icon('plus')}</button>
       </div>
+      ${all.length ? '' : '<p class="sub one-line">Places you’d love to go, not tied to a trip yet.</p>'}
       ${all.length ? `${chipsHtml(all, counts, 0)}
       ${modeOf('some') === 'map' ? mapSection(shown, null, true) : `<div class="ideas">${shown.map(i => ideaCard(i, null)).join('')}</div>`}` : `<div class="empty">
         <div class="empty-emoji">☁️</div><h2>Your someday list</h2>

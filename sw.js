@@ -2,7 +2,7 @@
    App files: network first, so an update you upload shows up right away.
    Firebase SDK and fonts: saved copy first -- those never change.
    Everything else (the database) goes straight to the network. */
-const APP_CACHE = 'tr-app-v1';
+const APP_CACHE = 'tr-app-v2';
 const APP_FILES = [
   './', 'index.html', 'styles.css', 'app.js', 'themes.js', 'store.js', 'demo.js',
   'firebase-config.js', 'manifest.json', 'icon-192.png', 'apple-touch-icon.png',

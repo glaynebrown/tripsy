@@ -151,7 +151,7 @@ const Demo = (() => {
       const id = newId();
       let code = makeCode(t.name);
       while (db.codes[codeId(code)]) code = makeCode(t.name);
-      db.trips[id] = { name: t.name, place: t.place || '', emoji: t.emoji || '✈️', start: t.start || '', end: t.end || '', owner: as, members: [as], roles: { [as]: 'edit' }, people: { [as]: { name: db.users[as].name } }, code, joinRole: 'edit', look: t.look || null, createdAt: Date.now() };
+      db.trips[id] = { name: t.name, place: t.place || '', emoji: t.emoji || '✈️', start: t.start || '', end: t.end || '', cover: t.cover || '', coverPos: t.coverPos || null, owner: as, members: [as], roles: { [as]: 'edit' }, people: { [as]: { name: db.users[as].name } }, code, joinRole: 'edit', look: t.look || null, createdAt: Date.now() };
       db.codes[codeId(code)] = { tid: id, code, role: 'edit' };
       db.ideas[id] = [];
       save(); return Promise.resolve(id);

@@ -4,7 +4,7 @@
    Firestore layout:
      users/{uid}                 profile: name, look, keepMine {tripId: true}
      users/{uid}/someday/{id}    my "someday" ideas (just me)
-     trips/{tid}                 { name, place, emoji, start, end, owner, members [uids],
+     trips/{tid}                 { name, place, emoji, start, end, cover (photo), coverPos {x, y}, owner, members [uids],
                                    roles {uid: 'edit'|'view'}, people {uid: {name, photo}},
                                    code (e.g. CHINA-7K2), joinRole, look (shared look or null) }
      trips/{tid}/ideas/{id}      { cat, name, photo, link, address, notes, must, by, createdAt }
@@ -121,6 +121,7 @@ const Store = (() => {
     const batch = db.batch();
     batch.set(ref, {
       name: t.name, place: t.place || '', emoji: t.emoji || '✈️', start: t.start || '', end: t.end || '',
+      cover: t.cover || '', coverPos: t.coverPos || null,
       owner: me, members: [me], roles: { [me]: 'edit' }, people: { [me]: { name: S.profile.name } },
       code, joinRole: 'edit', look: t.look || null, createdAt: Date.now(),
     });
@@ -128,7 +129,7 @@ const Store = (() => {
     await batch.commit();
     return ref.id;
   }
-  // name, place, emoji, start, end, look -- anyone who can edit
+  // name, place, emoji, start, end, cover, coverPos, look -- anyone who can edit
   const saveTrip = (tid, patch) => T(tid).update(patch);
   // owner only
   const setRole = (tid, who, role) => T(tid).update({ ['roles.' + who]: role });

@@ -51,6 +51,10 @@
   const safeUrl = u => (/^https?:\/\//i.test(u || '') ? u : '');
   const mapsUrl = (address, t) => 'https://maps.apple.com/?q=' + encodeURIComponent(address + (t && t.place && !address.includes(t.place) ? ', ' + t.place : ''));
 
+  // A trip's cover photo, framed where it was dragged to (x/y = 0-100, 50 = centered).
+  const coverPos = t => `${t.coverPos ? t.coverPos.x : 50}% ${t.coverPos ? t.coverPos.y : 50}%`;
+  const coverImg = (t, cls) => `<img class="${cls}" src="${esc(t.cover)}" alt="" style="object-position:${coverPos(t)}" draggable="false">`;
+
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   function dateRange(a, b) {
     const p = s => { const [y, m, d] = s.split('-').map(Number); return { y, m, d }; };
@@ -131,7 +135,9 @@
 
   // ---------- photos ----------
   // Shrinks a picked photo so it fits comfortably in the database.
-  function pickPhoto() {
+  // opts.max = longest side in px, opts.limit = most characters to store
+  function pickPhoto(opts = {}) {
+    const max = opts.max || 1100, limit = opts.limit || 380000;
     return new Promise(res => {
       const inp = $('#file');
       inp.value = '';
@@ -141,14 +147,13 @@
         const img = new Image();
         const url = URL.createObjectURL(f);
         img.onload = () => {
-          const max = 1100;
           const k = Math.min(1, max / Math.max(img.width, img.height));
           const c = document.createElement('canvas');
           c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
           c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
           URL.revokeObjectURL(url);
           let q = 0.78, out = c.toDataURL('image/jpeg', q);
-          while (out.length > 380000 && q > 0.4) { q -= 0.08; out = c.toDataURL('image/jpeg', q); }
+          while (out.length > limit && q > 0.4) { q -= 0.08; out = c.toDataURL('image/jpeg', q); }
           res(out);
         };
         img.onerror = () => { URL.revokeObjectURL(url); toast('That photo couldn’t be opened.'); res(null); };
@@ -332,7 +337,7 @@
     const when = t.start ? dateRange(t.start, t.end) : 'No dates yet';
     const soon = untilText(t.start);
     return `<a class="trip-card" href="#/t/${esc(t.id)}" style="${Themes.styleAttr(look)}">
-      <div class="trip-cover"><span class="trip-emoji">${esc(t.emoji || '✈️')}</span>${soon ? `<span class="soon">${esc(soon)}</span>` : ''}</div>
+      <div class="trip-cover ${t.cover ? 'photo' : ''}">${t.cover ? coverImg(t, 'cover-img') : `<span class="trip-emoji">${esc(t.emoji || '✈️')}</span>`}${soon ? `<span class="soon">${esc(soon)}</span>` : ''}</div>
       <div class="trip-body">
         <h3>${esc(t.name)}</h3>
         ${t.place ? `<div class="trip-place">${icon('pin')}${esc(t.place)}</div>` : ''}
@@ -349,7 +354,13 @@
     const trips = sortedTrips();
     view.innerHTML = `<div class="page-head">
         <div><h1>Hi ${esc(myName())} ${icon('sparkle', 'h-spark')}</h1><p class="sub">${trips.length ? 'Where to next?' : 'Let’s plan something dreamy.'}</p></div>
-        <div class="row"><button class="btn ghost small" id="join">Join with a code</button><button class="btn small" id="new">${icon('plus')} New trip</button></div>
+        <div class="plus-wrap">
+          <button class="plus-btn" id="plus" aria-label="New trip or join" aria-expanded="false">${icon('plus')}</button>
+          <div class="plus-menu" id="plus-menu" hidden>
+            <button id="new">${icon('suitcase')} New trip</button>
+            <button id="join">${icon('person-plus')} Join with a code</button>
+          </div>
+        </div>
       </div>
       ${trips.length ? `<div class="trips">${trips.map(tripCard).join('')}</div>` : `<div class="empty">
         <svg class="brand-mark big" aria-hidden="true"><use href="#i-mark"/></svg>
@@ -357,9 +368,14 @@
         <p>Start a trip to collect places, food and ideas — then invite your friends to add theirs.</p>
         <button class="btn" id="new2">${icon('plus')} Start a trip</button>
       </div>`}`;
-    $('#new').onclick = () => tripSheet();
+    const menu = $('#plus-menu');
+    const showMenu = on => { menu.hidden = !on; $('#plus').setAttribute('aria-expanded', on); };
+    $('#plus').onclick = e => { e.stopPropagation(); showMenu(menu.hidden); };
+    document.onclick = e => { if (!menu.hidden && !e.target.closest('.plus-wrap')) showMenu(false); };
+    $('#new').onclick = () => { showMenu(false); tripSheet(); };
     if ($('#new2')) $('#new2').onclick = () => tripSheet();
     $('#join').onclick = async () => {
+      showMenu(false);
       const code = await ask('Join a trip', 'Type the code a friend sent you.', 'Join', { input: true, placeholder: 'e.g. CHINA-7K2' });
       if (code) joinCode(code);
     };
@@ -389,17 +405,22 @@
 
   // New trip, or edit one's details.
   function tripSheet(t) {
-    const d = t ? { ...t } : { name: '', place: '', emoji: '✈️', start: '', end: '' };
+    const d = t ? { ...t } : { name: '', place: '', emoji: '✈️', start: '', end: '', cover: '', coverPos: null };
+    d.coverPos = d.coverPos ? { ...d.coverPos } : { x: 50, y: 50 };
     let dated = !!d.start;
     const draw = () => {
       openSheet(`<div class="sheet-head"><h2>${t ? 'Trip details' : 'New trip'}</h2><button class="btn quiet" data-act="close">Cancel</button></div>
-        <div class="emoji-pick">${TRIP_EMOJI.map(e => `<button type="button" class="${d.emoji === e ? 'on' : ''}" data-emoji="${e}">${e}</button>`).join('')}</div>
+        ${d.cover ? `<div class="cover-edit" id="cv-box">${coverImg(d, 'cover-img')}<span class="cover-hint">Drag to fit</span></div>
+          <div class="row tight cover-acts"><button type="button" class="btn soft small" id="cv-pick">${icon('photo')} Change photo</button><button type="button" class="btn quiet small" id="cv-off">Remove</button></div>`
+          : `<button type="button" class="cover-add" id="cv-pick">${icon('photo')}<span>Add a cover photo</span><small>Optional — or pick an emoji below</small></button>`}
+        <div class="emoji-pick ${d.cover ? 'muted-pick' : ''}">${TRIP_EMOJI.map(e => `<button type="button" class="${d.emoji === e ? 'on' : ''}" data-emoji="${e}">${e}</button>`).join('')}</div>
         <div class="field"><label for="tr-name">Trip name</label><input class="input" id="tr-name" value="${esc(d.name)}" placeholder="Girls’ trip to Italy"></div>
         <div class="field"><label for="tr-place">Where</label><input class="input" id="tr-place" value="${esc(d.place)}" placeholder="City, country — or a few"></div>
         <label class="switch"><input type="checkbox" id="tr-dated" ${dated ? 'checked' : ''}> We have dates</label>
         ${dated ? `<div class="md tight"><div class="field"><label for="tr-start">From</label><input class="input" type="date" id="tr-start" value="${esc(d.start)}"></div>
           <div class="field"><label for="tr-end">To</label><input class="input" type="date" id="tr-end" value="${esc(d.end)}"></div></div>` : '<p class="hint">No dates needed — just collect ideas. You can add them anytime.</p>'}
         <div class="sheet-foot"><button class="btn wide" id="tr-save">${t ? 'Save' : 'Create trip'}</button></div>`, onClick);
+      framer();
     };
     const grab = () => {
       d.name = $('#tr-name').value; d.place = $('#tr-place').value;
@@ -408,6 +429,13 @@
     async function onClick(e) {
       const em = e.target.closest('[data-emoji]');
       if (em) { grab(); d.emoji = em.dataset.emoji; draw(); return; }
+      if (e.target.closest('#cv-pick')) {
+        grab();
+        const p = await pickPhoto({ max: 1500, limit: 450000 });
+        if (p) { d.cover = p; d.coverPos = { x: 50, y: 50 }; draw(); }
+        return;
+      }
+      if (e.target.closest('#cv-off')) { grab(); d.cover = ''; draw(); return; }
       if (e.target.id === 'tr-dated') { grab(); dated = e.target.checked; if (!dated) { d.start = ''; d.end = ''; } draw(); return; }
       if (e.target.closest('#tr-save')) {
         grab();
@@ -415,13 +443,37 @@
         if (!name) { $('#tr-name').focus(); return toast('Give your trip a name.'); }
         if (d.start && d.end && d.end < d.start) return toast('The end date is before the start date.');
         if (d.start && !d.end) d.end = d.start;
-        const out = { name, place: d.place.trim(), emoji: d.emoji, start: dated ? d.start : '', end: dated ? d.end : '' };
+        const out = { name, place: d.place.trim(), emoji: d.emoji, start: dated ? d.start : '', end: dated ? d.end : '',
+          cover: d.cover || '', coverPos: d.cover ? { x: Math.round(d.coverPos.x), y: Math.round(d.coverPos.y) } : null };
         e.target.disabled = true;
         try {
           if (t) { await API.saveTrip(t.id, out); closeSheet(); toast('Saved'); }
           else { const tid = await API.createTrip(out); closeSheet(); location.hash = '#/t/' + tid; }
         } catch (err) { e.target.disabled = false; oops(err); }
       }
+    }
+    // Drag the photo inside its frame to choose which part shows.
+    function framer() {
+      const box = $('#cv-box');
+      if (!box) return;
+      const img = box.querySelector('img');
+      let start = null;
+      box.onpointerdown = e => {
+        if (!img.naturalWidth) return;
+        const k = Math.max(box.clientWidth / img.naturalWidth, box.clientHeight / img.naturalHeight);
+        // how far the photo sticks out past the frame, in px
+        start = { x: e.clientX, y: e.clientY, pos: { ...d.coverPos }, ox: img.naturalWidth * k - box.clientWidth, oy: img.naturalHeight * k - box.clientHeight };
+        box.setPointerCapture(e.pointerId);
+        box.classList.add('dragging');
+      };
+      box.onpointermove = e => {
+        if (!start) return;
+        const clamp = v => Math.max(0, Math.min(100, v));
+        if (start.ox > 1) d.coverPos.x = clamp(start.pos.x - (e.clientX - start.x) / start.ox * 100);
+        if (start.oy > 1) d.coverPos.y = clamp(start.pos.y - (e.clientY - start.y) / start.oy * 100);
+        img.style.objectPosition = `${d.coverPos.x}% ${d.coverPos.y}%`;
+      };
+      box.onpointerup = box.onpointercancel = () => { start = null; box.classList.remove('dragging'); };
     }
     draw();
   }
@@ -444,8 +496,8 @@
     const soon = untilText(t.start);
 
     view.innerHTML = `<a class="back" href="#/trips">${icon('back')} Trips</a>
-      <section class="hero">
-        <div class="hero-emoji">${esc(t.emoji || '✈️')}</div>
+      <section class="hero ${t.cover ? 'has-cover' : ''}">
+        ${t.cover ? `<div class="hero-cover">${coverImg(t, 'cover-img')}</div>` : `<div class="hero-emoji">${esc(t.emoji || '✈️')}</div>`}
         <div class="hero-main">
           <h1>${esc(t.name)}</h1>
           ${t.place ? `<div class="trip-place">${icon('pin')}${esc(t.place)}</div>` : ''}
@@ -728,8 +780,8 @@
     if (ui.cat !== 'all' && !counts[ui.cat]) ui.cat = 'all';
     const shown = all.filter(i => ui.cat === 'all' || (i.cat || 'other') === ui.cat);
     view.innerHTML = `<div class="page-head">
-        <div><h1>Someday ☁️</h1><p class="sub">Places you’d love to go, not tied to a trip yet. Just for you.</p></div>
-        <button class="btn small" id="add-s">${icon('plus')} Add</button>
+        <div><h1>Someday ☁️</h1><p class="sub">Places you’d love to go, not tied to a trip yet.</p></div>
+        <button class="plus-btn" id="add-s" aria-label="Add a someday idea">${icon('plus')}</button>
       </div>
       ${all.length ? `<div class="chips scroll">
         <button class="chip ${ui.cat === 'all' ? 'on' : ''}" data-cat="all">All <span class="n">${all.length}</span></button>

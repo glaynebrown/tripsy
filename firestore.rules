@@ -30,11 +30,11 @@ service cloud.firestore {
         && request.resource.data.roles == { (me()): 'edit' };
       allow update: if signedIn() && (
         // editors: the trip's details and its shared look
-        (editor() && changed().hasOnly(['name', 'place', 'emoji', 'start', 'end', 'look']))
+        (editor() && changed().hasOnly(['name', 'place', 'emoji', 'start', 'end', 'cover', 'coverPos', 'look']))
         // anyone on the trip: their own name
         || (member() && changed().hasOnly(['people']) && onlyMeIn('people'))
         // the owner: people, roles, the invite code, handing the trip on
-        || (owner() && changed().hasOnly(['name', 'place', 'emoji', 'start', 'end', 'look', 'members', 'roles', 'people', 'code', 'joinRole', 'owner'])
+        || (owner() && changed().hasOnly(['name', 'place', 'emoji', 'start', 'end', 'cover', 'coverPos', 'look', 'members', 'roles', 'people', 'code', 'joinRole', 'owner'])
             && request.resource.data.owner in request.resource.data.members)
         // join: add only yourself, with the current code and the role the owner picked
         || (!member()

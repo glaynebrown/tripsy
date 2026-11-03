@@ -369,3 +369,51 @@ main { max-width: 980px; margin: 0 auto; padding: 8px 20px 40px; }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 .has-fab #toast { bottom: calc(156px + env(safe-area-inset-bottom)); }
 @media (min-width: 760px) { #toast, .has-fab #toast { bottom: 30px; } }
+
+/* ---------- + menu on Trips ---------- */
+.plus-wrap { position: relative; align-self: center; }
+.plus-btn {
+  width: 46px; height: 46px; border-radius: 50%; border: 0; cursor: pointer; display: grid; place-items: center;
+  background: var(--deep); color: #fff; box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--deep) 80%, transparent);
+  transition: transform .15s ease;
+}
+.plus-btn .icon { width: 24px; height: 24px; transition: transform .2s ease; }
+.plus-btn[aria-expanded="true"] .icon { transform: rotate(45deg); }
+.plus-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 15; min-width: 210px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 6px; box-shadow: var(--shadow);
+  animation: pop .15s ease;
+}
+.plus-menu button { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; padding: 12px 12px; border-radius: 12px; font-weight: 700; font-size: 15px; cursor: pointer; text-align: left; color: var(--ink); white-space: nowrap; }
+.plus-menu button:hover { background: var(--softer); }
+.plus-menu .icon { color: var(--deep); }
+@keyframes pop { from { opacity: 0; transform: translateY(-4px) scale(.97); } }
+.page-head:has(.plus-wrap), .page-head:has(.plus-btn) { flex-wrap: nowrap; align-items: center; }
+.page-head > .plus-btn { flex: none; }
+
+/* ---------- trip cover photos ---------- */
+.cover-img { width: 100%; height: 100%; object-fit: cover; display: block; user-select: none; -webkit-user-select: none; pointer-events: none; }
+.trip-cover.photo { background: var(--softer); }
+.trip-cover.photo .cover-img { position: absolute; inset: 0; }
+.trip-cover.photo .soon { z-index: 1; }
+.hero.has-cover { grid-template-columns: 1fr auto; padding-top: 0; overflow: hidden; }
+.hero-cover { grid-column: 1 / -1; height: 180px; margin: 0 -18px 2px; position: relative; }
+.hero-cover::after { content: ''; position: absolute; inset: auto 0 0; height: 40%; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--card) 55%, transparent)); }
+@media (min-width: 760px) { .hero-cover { height: 240px; } }
+@media (max-width: 640px) { .hero.has-cover { grid-template-columns: 1fr; } }
+.cover-add {
+  display: grid; justify-items: center; gap: 3px; width: 100%; margin-bottom: 14px; padding: 18px; cursor: pointer;
+  border: 1.5px dashed var(--line); border-radius: 18px; background: var(--card); color: var(--deep); font-weight: 700;
+}
+.cover-add .icon { width: 26px; height: 26px; }
+.cover-add small { color: var(--muted); font-weight: 600; font-size: 13px; }
+.cover-edit { position: relative; height: 150px; border-radius: 18px; overflow: hidden; cursor: grab; touch-action: none; background: var(--softer); }
+.cover-edit.dragging { cursor: grabbing; }
+.cover-hint { position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%); background: color-mix(in srgb, var(--ink) 60%, transparent); color: #fff; font-size: 12.5px; font-weight: 700; padding: 4px 12px; border-radius: 999px; pointer-events: none; transition: opacity .2s; }
+.cover-edit.dragging .cover-hint { opacity: 0; }
+.cover-acts { margin: 8px 0 14px; }
+.muted-pick { opacity: .5; }
+/* iPhone date boxes otherwise refuse to shrink to their column */
+.md .input { min-width: 0; }
+input[type="date"].input { -webkit-appearance: none; appearance: none; min-height: 46px; display: block; }
+input[type="date"].input::-webkit-date-and-time-value { text-align: left; }

@@ -298,7 +298,7 @@
     view.innerHTML = '<p class="loading">Loading…</p>';
     API.start(s => { S = s; render(); });
   });
-  window.addEventListener('hashchange', () => { noteJoin(); ui.cat = 'all'; if (!sheetWrap.hidden) closeSheet(); $('#dialog-wrap').hidden = true; render(); window.scrollTo(0, 0); });
+  window.addEventListener('hashchange', () => { noteJoin(); ui.cat = 'all'; Maps.forget(); if (!sheetWrap.hidden) closeSheet(); $('#dialog-wrap').hidden = true; render(); window.scrollTo(0, 0); });
   view.addEventListener('focusout', () => setTimeout(() => { if (pending && !typing()) render(); }, 0));
   const typing = () => view.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !/checkbox|radio|color/.test(document.activeElement.type);
 
@@ -615,7 +615,7 @@
     const when = t.start ? dateRange(t.start, t.end) : '';
     const soon = untilText(t.start);
 
-    view.innerHTML = `<div class="back-row"><a class="back" href="#/trips">${icon('back')} Trips</a><button class="icon-btn" id="more" aria-label="Trip options">${icon('dots')}</button></div>
+    view.innerHTML = `<div class="back-row"><a class="back" href="#/trips">${icon('back')} Trips</a><div class="row">${all.length ? modeSwitch('trip') : ''}<button class="icon-btn" id="more" aria-label="Trip options">${icon('dots')}</button></div></div>
       <section class="hero ${t.cover ? 'has-cover' : ''}">
         ${t.cover ? `<div class="hero-cover">${coverImg(t, 'cover-img')}</div>` : `<div class="hero-emoji">${esc(t.emoji || '✈️')}</div>`}
         <div class="hero-main">
@@ -630,7 +630,7 @@
         </div>
       </section>
       ${t.look && (S.profile.keepMine || {})[t.id] ? `<p class="look-note">${icon('palette')} You’re seeing your own look here. <button class="linkbtn" id="use-look">Use the trip’s look</button></p>` : ''}
-      ${all.length ? `${modeSwitch('trip')}${chipsHtml(all, counts, musts)}
+      ${all.length ? `${chipsHtml(all, counts, musts)}
       ${modeOf('trip') === 'map' ? mapSection(shown, t, edit) : `<div class="ideas">${shown.map(i => ideaCard(i, t)).join('')}</div>`}` : `<div class="empty">
         <div class="empty-emoji">🗺️</div>
         <h2>Start dreaming</h2>
@@ -638,7 +638,7 @@
       </div>`}
       ${edit ? `<button class="fab" id="add">${icon('plus')}<span>Add idea</span></button>` : ''}`;
 
-    view.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { ui.cat = b.dataset.cat; render(); });
+    view.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { ui.cat = b.dataset.cat; Maps.forget(); render(); });
     view.querySelectorAll('[data-idea]').forEach(b => b.onclick = () => ideaDetail(t, all.find(i => i.id === b.dataset.idea)));
     sortableChips();
     bindMode('trip');
@@ -1089,15 +1089,15 @@
     if (ui.cat !== 'all' && !counts[ui.cat]) ui.cat = 'all';
     const shown = all.filter(i => ui.cat === 'all' || (i.cat || 'other') === ui.cat);
     view.innerHTML = `<div class="page-head">
-        <div><h1>Someday ☁️</h1><p class="sub">Places you’d love to go, not tied to a trip yet.</p></div>
+        <div><h1>Someday ☁️</h1>${all.length ? `<div class="sub-switch">${modeSwitch('some')}</div>` : '<p class="sub">Places you’d love to go, not tied to a trip yet.</p>'}</div>
         <button class="plus-btn" id="add-s" aria-label="Add a someday idea">${icon('plus')}</button>
       </div>
-      ${all.length ? `${modeSwitch('some')}${chipsHtml(all, counts, 0)}
+      ${all.length ? `${chipsHtml(all, counts, 0)}
       ${modeOf('some') === 'map' ? mapSection(shown, null, true) : `<div class="ideas">${shown.map(i => ideaCard(i, null)).join('')}</div>`}` : `<div class="empty">
         <div class="empty-emoji">☁️</div><h2>Your someday list</h2>
         <p>Saw a dreamy hotel or a restaurant you have to try one day? Save it here, then move it into a trip when it’s time.</p>
       </div>`}`;
-    view.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { ui.cat = b.dataset.cat; render(); });
+    view.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { ui.cat = b.dataset.cat; Maps.forget(); render(); });
     view.querySelectorAll('[data-idea]').forEach(b => b.onclick = () => ideaDetail(null, all.find(i => i.id === b.dataset.idea)));
     sortableChips();
     bindMode('some');

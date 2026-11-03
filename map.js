@@ -211,20 +211,27 @@ const Maps = (() => {
       big.markers.push(m);
       pts.push([i.loc.lng, i.loc.lat]);
     }
-    // Frame the pins when the map is opened for a different trip or filter.
-    if (big.key !== key) {
-      big.key = key;
+    // Frame every pin each time the map is opened (or the filter changes).
+    // Live updates while it's open leave your zoom alone.
+    const frame = async () => {
+      big.map.resize();
       if (pts.length > 1) {
         const b = pts.reduce((bb, p) => bb.extend(p), new gl.LngLatBounds(pts[0], pts[0]));
-        big.map.fitBounds(b, { padding: 50, maxZoom: 15, duration: 0 });
+        // extra room on top: teardrop pins stand up above their spot
+        big.map.fitBounds(b, { padding: { top: 70, bottom: 36, left: 36, right: 36 }, maxZoom: 15, duration: 0 });
       } else if (pts.length === 1) big.map.jumpTo({ center: pts[0], zoom: 14 });
       else {
         big.map.jumpTo({ center: [0, 25], zoom: 1 });
         const c = place ? await placeCenter(place) : null;
         if (c && big.key === key) big.map.jumpTo({ center: [c.lng, c.lat], zoom: 10 });
       }
-    }
-    setTimeout(() => big && big.map.resize(), 60);
+    };
+    if (big.key !== key) {
+      big.key = key;
+      await frame();
+      // once more after the page has settled, in case the map's size changed
+      setTimeout(() => { if (big && big.key === key && big.el.isConnected) frame(); }, 120);
+    } else setTimeout(() => big && big.map.resize(), 60);
   }
   const forget = () => { if (big) big.key = null; };
 

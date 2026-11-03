@@ -515,3 +515,15 @@ input[type="date"].input::-webkit-date-and-time-value { text-align: left; }
 /* the + lines up with the page title, however long the line under it is */
 .page-head:has(.plus-wrap), .page-head:has(.plus-btn) { align-items: flex-start; }
 .page-head .plus-wrap, .page-head > .plus-btn { align-self: flex-start; margin-top: calc((30px * var(--head-scale) * 1.15 - 46px) / 2); }
+
+/* Ideas · Map switch, small, up in the top row */
+.seg.mode { margin: 0; }
+.seg.mode button { padding: 6px 11px; font-size: 13.5px; gap: 5px; }
+.seg.mode .icon { width: 15px; height: 15px; }
+.back-row .row { gap: 8px; }
+.sub-switch { margin-top: 8px; }
+@media (max-width: 400px) { .seg.mode button { padding: 6px 9px; } }
+/* the trip's ⋯ is just the dots -- no circle -- with the same size tap area */
+.back-row #more { border: 0; background: none; color: var(--muted); width: 40px; height: 40px; margin-right: -8px; }
+.back-row #more .icon { width: 24px; height: 24px; }
+.back-row #more:active { background: var(--softer); }

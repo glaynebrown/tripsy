@@ -8,6 +8,8 @@
                                    roles {uid: 'edit'|'view'}, people {uid: {name, photo}},
                                    code (e.g. CHINA-7K2), joinRole, look (shared look or null) }
      trips/{tid}/ideas/{id}      { cat, name, photo, link, address, notes, must, loc {lat, lng}, pin {color, emoji, shape}, by, createdAt }
+     trips/{tid}/plan/{id}       one stop on the itinerary: { day 'YYYY-MM-DD', slot morning|afternoon|evening|'',
+                                   time 'HH:MM'|'', order, idea (an idea's id) or text + emoji, note, by }
      codes/{CODE}                { tid, code, role } -- CODE is the trip code without the dash
 
    firestore.rules is what keeps each trip to its own people. */
@@ -45,7 +47,7 @@ const Store = (() => {
 
   // ---- live data ----
   // start(cb) keeps cb fed with one state object:
-  //   { me, loaded, profile, trips [], ideas {tid: []}, someday [] }
+  //   { me, loaded, profile, trips [], ideas {tid: []}, plan {tid: []}, someday [] }
   let S = null;
   let subs = {};
   let emitT = null;
@@ -67,14 +69,18 @@ const Store = (() => {
     stop();
     cb = onState;
     const me = uid();
-    S = { me, loaded: false, profile: null, trips: [], ideas: {}, someday: [] };
+    S = { me, loaded: false, profile: null, trips: [], ideas: {}, plan: {}, someday: [] };
     listen('me', U(me), s => { S.profile = s && s.exists ? s.data() : null; S.loaded = true; emit(); });
     listen('someday', U(me).collection('someday'), s => { S.someday = s ? docs(s) : []; emit(); });
     listen('trips', db.collection('trips').where('members', 'array-contains', me), s => {
       S.trips = s ? docs(s) : [];
       const want = new Set(S.trips.map(t => t.id));
       for (const t of S.trips) listen('ideas:' + t.id, T(t.id).collection('ideas'), x => { S.ideas[t.id] = x ? docs(x) : []; emit(); });
-      for (const key of Object.keys(subs)) if (key.startsWith('ideas:') && !want.has(key.slice(6))) { drop(key); delete S.ideas[key.slice(6)]; }
+      for (const t of S.trips) listen('plan:' + t.id, T(t.id).collection('plan'), x => { S.plan[t.id] = x ? docs(x) : []; emit(); });
+      for (const key of Object.keys(subs)) {
+        const [kind, tid] = key.split(':');
+        if ((kind === 'ideas' || kind === 'plan') && !want.has(tid)) { drop(key); delete S[kind][tid]; }
+      }
       emit();
     });
   }
@@ -129,7 +135,7 @@ const Store = (() => {
     await batch.commit();
     return ref.id;
   }
-  // name, place, emoji, start, end, cover, coverPos, look, pins -- anyone who can edit
+  // name, place, emoji, start, end, cover, coverPos, look, pins, planStyle -- anyone who can edit
   const saveTrip = (tid, patch) => T(tid).update(patch);
   // owner only
   const setRole = (tid, who, role) => T(tid).update({ ['roles.' + who]: role });
@@ -175,10 +181,10 @@ const Store = (() => {
   const leaveTrip = tid => removePerson(tid, uid());
   async function deleteTrip(tid) {
     const t = S.trips.find(x => x.id === tid);
-    const ideas = await T(tid).collection('ideas').get();
-    for (let i = 0; i < ideas.docs.length; i += 400) {
+    const ideas = [...(await T(tid).collection('ideas').get()).docs, ...(await T(tid).collection('plan').get()).docs];
+    for (let i = 0; i < ideas.length; i += 400) {
       const b = db.batch();
-      ideas.docs.slice(i, i + 400).forEach(d => b.delete(d.ref));
+      ideas.slice(i, i + 400).forEach(d => b.delete(d.ref));
       await b.commit();
     }
     await T(tid).delete();
@@ -193,7 +199,35 @@ const Store = (() => {
     if (!id) { rest.by = uid(); rest.createdAt = Date.now(); }
     return (id ? ref.update(rest) : ref.set(rest)).then(() => ref.id);
   }
-  const deleteIdea = (tid, id) => T(tid).collection('ideas').doc(id).delete();
+  // An idea leaves the plan too, wherever it was.
+  function deleteIdea(tid, id) {
+    const batch = db.batch();
+    batch.delete(T(tid).collection('ideas').doc(id));
+    (S.plan[tid] || []).filter(p => p.idea === id).forEach(p => batch.delete(T(tid).collection('plan').doc(p.id)));
+    return batch.commit();
+  }
+
+  // ---- the plan ----
+  function savePlan(tid, item) {
+    const { id, ...rest } = item;
+    const col = T(tid).collection('plan');
+    const ref = id ? col.doc(id) : col.doc();
+    if (!id) { rest.by = uid(); rest.createdAt = Date.now(); }
+    return (id ? ref.update(rest) : ref.set(rest)).then(() => ref.id);
+  }
+  // several new stops at once (ticked in "Add to this day")
+  function addPlan(tid, items) {
+    const batch = db.batch();
+    for (const it of items) batch.set(T(tid).collection('plan').doc(), { ...it, by: uid(), createdAt: Date.now() });
+    return batch.commit();
+  }
+  // after a drag: [{ id, day, slot, order }]
+  function movePlan(tid, moves) {
+    const batch = db.batch();
+    for (const { id, ...m } of moves) batch.update(T(tid).collection('plan').doc(id), m);
+    return batch.commit();
+  }
+  const deletePlan = (tid, id) => T(tid).collection('plan').doc(id).delete();
 
   // ---- someday ----
   function saveSomeday(item) {
@@ -251,6 +285,6 @@ const Store = (() => {
   return {
     configured: true, onUser, signIn, signOut, start, stop, createProfile, saveProfile, setKeepMine,
     createTrip, saveTrip, setRole, setJoinRole, removePerson, newTripCode, join, leaveTrip, deleteTrip,
-    saveIdea, deleteIdea, saveSomeday, deleteSomeday, moveToTrip, copyToSomeday, deleteAccount, uid,
+    saveIdea, deleteIdea, savePlan, addPlan, movePlan, deletePlan, saveSomeday, deleteSomeday, moveToTrip, copyToSomeday, deleteAccount, uid,
   };
 })();

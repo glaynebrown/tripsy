@@ -6,7 +6,7 @@
    a "View as" switch to check it from a friend's side. */
 
 const Demo = (() => {
-  const KEY = 'tr-demo2';
+  const KEY = 'tr-demo3';
   let db = null;
   let as = 'izzy';
   let cb = null;
@@ -25,7 +25,7 @@ const Demo = (() => {
     const idea = (cat, name, o) => ({ id: newId(), cat, name, createdAt: now - Math.random() * 3e9, by: 'izzy', ...o });
     const all = { izzy: 'edit', maddie: 'edit', soph: 'edit' };
     const ppl = ids => Object.fromEntries(ids.map(i => [i, { name: NAMES[i] }]));
-    return {
+    const out = {
       users: {
         izzy: { name: 'Izzy', look: { palette: 'lavender', font: 'dreamy' }, keepMine: {} },
         maddie: { name: 'Maddie', look: { palette: 'candy', font: 'script' }, keepMine: {} },
@@ -90,6 +90,19 @@ const Demo = (() => {
       },
       codes: { AMALFI7K2: { tid: 'amalfi', code: 'AMALFI-7K2', role: 'edit' }, CHINAP4Q: { tid: 'china', code: 'CHINA-P4Q', role: 'edit' }, NASHVI3RT: { tid: 'nash', code: 'NASHVI-3RT', role: 'edit' }, PARISW8N: { tid: 'paris', code: 'PARIS-W8N', role: 'view' } },
     };
+    // a started plan on the China trip (it has dates)
+    const cn = name => out.ideas.china.find(i => i.name.includes(name)).id;
+    const stop = (day, order, o) => ({ id: newId(), day, slot: '', time: '', order, by: 'maddie', createdAt: now, ...o });
+    out.plan = {
+      china: [
+        stop('2027-04-10', 0, { text: 'Land in Beijing', emoji: '✈️', time: '14:15', note: 'Flight UA 851' }),
+        stop('2027-04-10', 1, { idea: cn('Peking duck'), time: '19:30', slot: 'evening' }),
+        stop('2027-04-11', 0, { idea: cn('Great Wall'), time: '08:00', slot: 'morning' }),
+        stop('2027-04-16', 0, { idea: cn('Bund'), slot: 'evening' }),
+        stop('2027-04-20', 0, { idea: cn('Panda'), time: '07:30', slot: 'morning', note: 'Get there right at opening' }),
+      ],
+    };
+    return out;
   }
   const NAMES = { izzy: 'Izzy', maddie: 'Maddie', soph: 'Sophia', ava: 'Ava' };
 
@@ -111,9 +124,9 @@ const Demo = (() => {
   function emit() {
     if (!cb) return;
     const trips = Object.entries(db.trips).filter(([, t]) => t.members.includes(as)).map(([id, t]) => ({ id, ...clone(t) }));
-    const ideas = {};
-    for (const t of trips) ideas[t.id] = clone(db.ideas[t.id] || []);
-    cb({ me: as, loaded: true, profile: db.users[as] ? clone(db.users[as]) : null, trips, ideas, someday: clone(db.someday[as] || []) });
+    const ideas = {}, plan = {};
+    for (const t of trips) { ideas[t.id] = clone(db.ideas[t.id] || []); plan[t.id] = clone((db.plan || {})[t.id] || []); }
+    cb({ me: as, loaded: true, profile: db.users[as] ? clone(db.users[as]) : null, trips, ideas, plan, someday: clone(db.someday[as] || []) });
   }
 
   load();
@@ -187,7 +200,7 @@ const Demo = (() => {
     leaveTrip(tid) { return this.removePerson(tid, as); },
     deleteTrip(tid) {
       if (!owner(tid)) return fail('Only the trip’s owner can delete it.');
-      delete db.codes[codeId(db.trips[tid].code)]; delete db.trips[tid]; delete db.ideas[tid];
+      delete db.codes[codeId(db.trips[tid].code)]; delete db.trips[tid]; delete db.ideas[tid]; if (db.plan) delete db.plan[tid];
       save(); return Promise.resolve();
     },
 
@@ -201,7 +214,35 @@ const Demo = (() => {
     },
     deleteIdea(tid, id) {
       if (!editor(tid)) return fail('You can look at this trip but not change it.');
-      db.ideas[tid] = (db.ideas[tid] || []).filter(x => x.id !== id); save(); return Promise.resolve();
+      db.ideas[tid] = (db.ideas[tid] || []).filter(x => x.id !== id);
+      if (db.plan && db.plan[tid]) db.plan[tid] = db.plan[tid].filter(p => p.idea !== id);
+      save(); return Promise.resolve();
+    },
+
+    savePlan(tid, item) {
+      if (!editor(tid)) return fail('You can look at this trip but not change it.');
+      const list = (db.plan = db.plan || {})[tid] = db.plan[tid] || [];
+      if (item.id) { const i = list.findIndex(x => x.id === item.id); if (i >= 0) list[i] = { ...list[i], ...item }; save(); return Promise.resolve(item.id); }
+      const id = newId();
+      list.push({ ...item, id, by: as, createdAt: Date.now() });
+      save(); return Promise.resolve(id);
+    },
+    addPlan(tid, items) {
+      if (!editor(tid)) return fail('You can look at this trip but not change it.');
+      const list = (db.plan = db.plan || {})[tid] = db.plan[tid] || [];
+      for (const it of items) list.push({ ...it, id: newId(), by: as, createdAt: Date.now() });
+      save(); return Promise.resolve();
+    },
+    movePlan(tid, moves) {
+      if (!editor(tid)) return fail('You can look at this trip but not change it.');
+      const list = (db.plan || {})[tid] || [];
+      for (const { id, ...m } of moves) { const it = list.find(x => x.id === id); if (it) Object.assign(it, m); }
+      save(); return Promise.resolve();
+    },
+    deletePlan(tid, id) {
+      if (!editor(tid)) return fail('You can look at this trip but not change it.');
+      if (db.plan && db.plan[tid]) db.plan[tid] = db.plan[tid].filter(x => x.id !== id);
+      save(); return Promise.resolve();
     },
 
     saveSomeday(item) {

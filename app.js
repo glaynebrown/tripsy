@@ -24,7 +24,7 @@
   let S = null;
   let pending = false;
   let dragging = false;
-  const ui = { cat: 'all' };
+  const ui = { cat: 'all', day: '' };
 
   const CATS = [
     { id: 'sights', name: 'Sights', emoji: '📍' },
@@ -223,7 +223,14 @@
       });
       if (over) {
         const before = list.indexOf(over) < list.indexOf(el);
-        box.insertBefore(el, before ? over : over.nextSibling);
+        over.parentNode.insertBefore(el, before ? over : over.nextSibling);
+      } else if (opts.lists) {
+        // over a list (an empty day, say) but not over another item: go to its end
+        const zone = [...box.querySelectorAll(opts.lists)].find(z => { const r = z.getBoundingClientRect(); return px > r.left && px < r.right && py > r.top - 6 && py < r.bottom + 6; });
+        if (zone && el.parentNode !== zone) {
+          const last = [...zone.querySelectorAll(sel)].pop();
+          zone.insertBefore(el, last ? last.nextSibling : zone.firstChild);
+        }
       }
       const dx = px - drag.x - (el.offsetLeft - drag.left) + (box.scrollLeft - drag.sx);
       const dy = opts.axis === 'x' ? 0 : py - drag.y - (el.offsetTop - drag.top) + (window.scrollY - drag.sy);
@@ -298,7 +305,7 @@
     view.innerHTML = '<p class="loading">Loading…</p>';
     API.start(s => { S = s; render(); });
   });
-  window.addEventListener('hashchange', () => { noteJoin(); ui.cat = 'all'; Maps.forget(); if (!sheetWrap.hidden) closeSheet(); $('#dialog-wrap').hidden = true; render(); window.scrollTo(0, 0); });
+  window.addEventListener('hashchange', () => { noteJoin(); ui.cat = 'all'; ui.day = ''; Maps.forget(); if (!sheetWrap.hidden) closeSheet(); $('#dialog-wrap').hidden = true; render(); window.scrollTo(0, 0); });
   view.addEventListener('focusout', () => setTimeout(() => { if (pending && !typing()) render(); }, 0));
   const typing = () => view.contains(document.activeElement) && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !/checkbox|radio|color/.test(document.activeElement.type);
 
@@ -614,8 +621,14 @@
       .sort((a, b) => (b.must ? 1 : 0) - (a.must ? 1 : 0) || (b.createdAt || 0) - (a.createdAt || 0));
     const when = t.start ? dateRange(t.start, t.end) : '';
     const soon = untilText(t.start);
+    const plans = hasPlan(t);
+    let mode = modeOf('trip');
+    if (mode === 'plan' && !plans) mode = 'ideas';
+    // on the map, show just one day's stops if picked
+    const dayIds = ui.day && plans ? new Set((S.plan[tid] || []).filter(p => p.day === ui.day && p.idea).map(p => p.idea)) : null;
+    const onMap = dayIds ? shown.filter(i => dayIds.has(i.id)) : shown;
 
-    view.innerHTML = `<div class="back-row"><a class="back" href="#/trips">${icon('back')} Trips</a><div class="row">${all.length ? modeSwitch('trip') : ''}<button class="icon-btn" id="more" aria-label="Trip options">${icon('dots')}</button></div></div>
+    view.innerHTML = `<div class="back-row"><a class="back" href="#/trips">${icon('back')} Trips</a><div class="row">${all.length || plans ? modeSwitch('trip', plans, mode) : ''}<button class="icon-btn" id="more" aria-label="Trip options">${icon('dots')}</button></div></div>
       <section class="hero ${t.cover ? 'has-cover' : ''}">
         ${t.cover ? `<div class="hero-cover">${coverImg(t, 'cover-img')}</div>` : `<div class="hero-emoji">${esc(t.emoji || '✈️')}</div>`}
         <div class="hero-main">
@@ -630,19 +643,21 @@
         </div>
       </section>
       ${t.look && (S.profile.keepMine || {})[t.id] ? `<p class="look-note">${icon('palette')} You’re seeing your own look here. <button class="linkbtn" id="use-look">Use the trip’s look</button></p>` : ''}
-      ${all.length ? `${chipsHtml(all, counts, musts)}
-      ${modeOf('trip') === 'map' ? mapSection(shown, t, edit) : `<div class="ideas">${shown.map(i => ideaCard(i, t)).join('')}</div>`}` : `<div class="empty">
+      ${mode === 'plan' ? planHtml(t) : all.length ? `${chipsHtml(all, counts, musts)}
+      ${mode === 'map' ? mapSection(onMap, t, edit, plans ? dayPicker(t) : '') : `<div class="ideas">${shown.map(i => ideaCard(i, t)).join('')}</div>`}` : `<div class="empty">
         <div class="empty-emoji">🗺️</div>
         <h2>Start dreaming</h2>
         <p>${edit ? 'Add places to see, restaurants, stays — anything you might want to do.' : 'Nothing here yet. You can see this trip but not add to it.'}</p>
       </div>`}
-      ${edit ? `<button class="fab" id="add">${icon('plus')}<span>Add idea</span></button>` : ''}`;
+      ${edit && mode !== 'plan' ? `<button class="fab" id="add">${icon('plus')}<span>Add idea</span></button>` : ''}`;
 
     view.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { ui.cat = b.dataset.cat; Maps.forget(); render(); });
     view.querySelectorAll('[data-idea]').forEach(b => b.onclick = () => ideaDetail(t, all.find(i => i.id === b.dataset.idea)));
     sortableChips();
     bindMode('trip');
-    if (modeOf('trip') === 'map') bindMap(t.id + ':' + ui.cat, shown, t, t.place, i => ideaDetail(t, i));
+    if (mode === 'map') bindMap(t.id + ':' + ui.cat + ':' + (ui.day || ''), onMap, t, t.place, i => ideaDetail(t, i));
+    if (mode === 'plan') bindPlan(t);
+    if ($('#map-day')) $('#map-day').onchange = e => { ui.day = e.target.value; Maps.forget(); render(); };
     if ($('#add')) $('#add').onclick = () => ideaSheet({ trip: t, item: { cat: ['all', 'must'].includes(ui.cat) ? '' : ui.cat, must: ui.cat === 'must' } });
     $('#people').onclick = () => peopleSheet(t);
     $('#more').onclick = () => tripMenu(t);
@@ -651,17 +666,18 @@
 
   // Ideas · Map switch (remembered per screen)
   const modeOf = where => ls.get('tr-mode-' + where, 'ideas');
-  const modeSwitch = where => `<div class="seg mode" role="tablist">
-      <button class="${modeOf(where) !== 'map' ? 'on' : ''}" data-mode="ideas" role="tab">${icon('grid')} Ideas</button>
-      <button class="${modeOf(where) === 'map' ? 'on' : ''}" data-mode="map" role="tab">${icon('map')} Map</button>
-    </div>`;
+  const modeSwitch = (where, plan, cur) => {
+    cur = cur || modeOf(where);
+    const b = (id, label, ic) => `<button class="${cur === id ? 'on' : ''}" data-mode="${id}" role="tab">${icon(ic)} ${label}</button>`;
+    return `<div class="seg mode ${plan ? 'three' : ''}" role="tablist">${b('ideas', 'Ideas', 'grid')}${b('map', 'Map', 'map')}${plan ? b('plan', 'Plan', 'calendar') : ''}</div>`;
+  };
   function bindMode(where) {
     view.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { ls.set('tr-mode-' + where, b.dataset.mode); Maps.forget(); render(); });
   }
   // The map, plus the ideas that aren't on it yet.
-  function mapSection(shown, trip, canChange) {
+  function mapSection(shown, trip, canChange, extra) {
     const off = shown.filter(i => !i.loc);
-    return `<div class="map-slot" id="map-slot"><p class="loading">Loading the map…</p></div>
+    return `<div class="map-slot" id="map-slot">${extra || ''}<p class="loading">Loading the map…</p></div>
       ${off.length ? `<div class="nomap">
         <div class="label">Not on the map yet</div>
         ${off.map(i => `<div class="nomap-row"><span>${catOf(i.cat).emoji}</span><b>${esc(i.name)}</b>
@@ -680,10 +696,11 @@
 
   function ideaCard(i, t) {
     const c = catOf(i.cat);
+    const days = t ? plannedDays(t, i.id) : [];
     return `<button class="idea" data-idea="${esc(i.id)}">
       ${i.photo ? `<img class="idea-photo" src="${esc(i.photo)}" alt="" loading="lazy">` : `<div class="idea-photo none">${c.emoji}</div>`}
       <div class="idea-body">
-        <div class="idea-tags"><span class="tag">${c.emoji} ${esc(c.name)}</span>${i.must ? '<span class="tag must">💖 Must-do</span>' : ''}</div>
+        <div class="idea-tags"><span class="tag">${c.emoji} ${esc(c.name)}</span>${i.must ? '<span class="tag must">💖 Must-do</span>' : ''}${days.length ? `<span class="tag day">📅 Day${days.length > 1 ? 's' : ''} ${days.join(', ')}</span>` : ''}</div>
         <div class="idea-name">${esc(i.name)}</div>
         ${i.where ? `<div class="idea-where">${icon('pin')}${esc(i.where)}</div>` : ''}
         ${i.notes ? `<div class="idea-notes">${esc(i.notes)}</div>` : ''}
@@ -937,6 +954,262 @@
     } catch (e) { oops(e); return false; }
   }
 
+  // ---------- the plan (day by day) ----------
+  const PLAN_STYLES = {
+    loose: { name: 'Loose', desc: 'Just a list for each day, in whatever order you drag.' },
+    slots: { name: 'Time of day', desc: 'Morning, afternoon and evening for each day.' },
+    times: { name: 'Times', desc: 'Give stops a time — each day sorts itself. No time is fine too.' },
+    none: { name: 'None', desc: 'No plan — this trip is just for collecting ideas.' },
+  };
+  const SLOTS = [['morning', '☀️ Morning'], ['afternoon', '🌤️ Afternoon'], ['evening', '🌙 Evening']];
+  const STOP_EMOJI = ['✈️', '🚆', '🚗', '⛴️', '🏨', '🧳', '🛌', '🍽️', '☕', '🍸', '📸', '🎉', '🛍️', '🏖️', '💆‍♀️', '📝'];
+  const hasPlan = t => !!(t && t.start && (t.planStyle || 'loose') !== 'none');
+  function tripDays(t) {
+    if (!t.start) return [];
+    const [y, m, d] = t.start.split('-').map(Number);
+    const end = t.end || t.start;
+    const out = [];
+    for (let i = 0; i < 120; i++) {
+      const x = new Date(Date.UTC(y, m - 1, d + i)).toISOString().slice(0, 10);
+      out.push(x);
+      if (x >= end) break;
+    }
+    return out;
+  }
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  function dayLabel(iso) {
+    const [y, m, d] = iso.split('-').map(Number);
+    return `${DOW[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]}, ${MON[m - 1]} ${d}`;
+  }
+  // Which day numbers an idea is planned on ("2, 4")
+  function plannedDays(t, ideaId) {
+    if (!hasPlan(t)) return [];
+    const days = tripDays(t);
+    return [...new Set((S.plan[t.id] || []).filter(p => p.idea === ideaId).map(p => days.indexOf(p.day) + 1).filter(n => n > 0))].sort((a, b) => a - b);
+  }
+  function timeLabel(hm) {
+    if (!hm) return '';
+    let [h, m] = hm.split(':').map(Number);
+    const ap = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return `${h}${m ? ':' + String(m).padStart(2, '0') : ''} ${ap}`;
+  }
+  const stopIdea = (t, p) => (p.idea ? (S.ideas[t.id] || []).find(i => i.id === p.idea) : null);
+  function sortStops(list, style) {
+    return list.slice().sort((a, b) => (style === 'times' ? ((a.time || '99') < (b.time || '99') ? -1 : (a.time || '99') > (b.time || '99') ? 1 : 0) : 0) || (a.order || 0) - (b.order || 0) || (a.createdAt || 0) - (b.createdAt || 0));
+  }
+  function stopHtml(t, p, style) {
+    const i = stopIdea(t, p);
+    if (p.idea && !i) return '';
+    const c = i ? catOf(i.cat) : null;
+    const name = i ? i.name : p.text;
+    const sub = p.note || (i && i.address) || '';
+    return `<div class="stop" data-stop="${esc(p.id)}">
+      ${style === 'times' ? `<span class="stop-time ${p.time ? '' : 'none'}">${p.time ? esc(timeLabel(p.time)) : '—'}</span>` : ''}
+      ${i && i.photo ? `<img class="stop-thumb" src="${esc(i.photo)}" alt="" draggable="false">` : `<span class="stop-thumb emoji">${esc(i ? c.emoji : p.emoji || '📝')}</span>`}
+      <span class="stop-main"><b>${esc(name)}${i && i.must ? ' 💖' : ''}</b>${sub ? `<small>${esc(sub)}</small>` : ''}</span>
+    </div>`;
+  }
+  function planHtml(t) {
+    const style = t.planStyle || 'loose';
+    const days = tripDays(t);
+    const items = S.plan[t.id] || [];
+    const edit = canEdit(t);
+    const list = (day, slot, stops, empty) => `<div class="plan-list" data-day="${day}" data-slot="${slot}">
+        ${sortStops(stops, style).map(p => stopHtml(t, p, style)).join('')}
+        ${empty ? `<p class="plan-empty">${edit ? 'Nothing yet' : 'Nothing planned'}</p>` : ''}
+      </div>`;
+    const addBtn = (day, slot, label) => (edit ? `<button class="add-stop" data-add-day="${day}" data-add-slot="${slot}" aria-label="Add to ${esc(label || 'this day')}">${icon('plus')}${label ? '' : ' Add'}</button>` : '');
+    const dayCard = (day, n) => {
+      const mine = items.filter(p => p.day === day);
+      let body;
+      if (style === 'slots') {
+        // one line per part of the day, with its own small +
+        const loose = mine.filter(p => !SLOTS.some(([k]) => k === p.slot));
+        body = (loose.length ? `<div class="slot-head"><span>Anytime</span>${addBtn(day, '', 'Anytime')}</div>${list(day, '', loose)}` : '')
+          + SLOTS.map(([k, label]) => `<div class="slot-head"><span>${label}</span>${addBtn(day, k, label)}</div>${list(day, k, mine.filter(p => p.slot === k))}`).join('');
+      } else body = list(day, '*', mine, true) + addBtn(day, '', '');
+      return `<section class="day" id="day-${day}">
+        <div class="day-head"><b>Day ${n + 1}</b><span>${esc(dayLabel(day))}</span>${mine.length ? `<small>${mine.length} stop${mine.length === 1 ? '' : 's'}</small>` : ''}</div>
+        ${body}
+      </section>`;
+    };
+    const off = items.filter(p => !days.includes(p.day));
+    return `<div class="plan" id="plan">
+      ${days.map(dayCard).join('')}
+      ${off.length ? `<section class="day off"><div class="day-head"><b>Not on a day anymore</b><small>The trip’s dates changed — tap one to move it</small></div>
+        <div class="plan-list" data-day="" data-slot="*">${off.map(p => stopHtml(t, p, style)).join('')}</div></section>` : ''}
+      ${edit && days.length > 1 ? '<p class="hint center plan-hint">Press and hold a stop to drag it to another spot or day.</p>' : ''}
+    </div>`;
+  }
+  function bindPlan(t) {
+    const box = $('#plan');
+    if (!box) return;
+    const style = t.planStyle || 'loose';
+    box.querySelectorAll('[data-add-day]').forEach(b => b.onclick = () => addStopSheet(t, b.dataset.addDay, b.dataset.addSlot));
+    box.addEventListener('click', e => {
+      const st = e.target.closest('[data-stop]');
+      if (st) stopSheet(t, (S.plan[t.id] || []).find(p => p.id === st.dataset.stop));
+    });
+    if (!canEdit(t)) return;
+    sortable(box, '.stop', { key: el => el.dataset.stop, lists: '.plan-list[data-day]:not([data-day=""])', onDrop: () => {
+      const cur = Object.fromEntries((S.plan[t.id] || []).map(p => [p.id, p]));
+      const moves = [];
+      box.querySelectorAll('.plan-list').forEach(listEl => {
+        const day = listEl.dataset.day, slot = listEl.dataset.slot;
+        if (!day) return;
+        [...listEl.querySelectorAll('.stop')].forEach((el, order) => {
+          const p = cur[el.dataset.stop];
+          if (!p) return;
+          const m = { id: p.id, day, order };
+          if (slot !== '*') m.slot = slot;
+          if (p.day !== m.day || (p.order || 0) !== order || (m.slot !== undefined && (p.slot || '') !== m.slot)) {
+            moves.push(m);
+            Object.assign(p, m); // show it right away
+          }
+        });
+      });
+      if (moves.length) API.movePlan(t.id, moves).catch(oops);
+      if (style === 'times') setTimeout(render, 60);
+    } });
+  }
+
+  // Add stops to a day: tick ideas, or write your own.
+  function addStopSheet(t, day, slot) {
+    const style = t.planStyle || 'loose';
+    const days = tripDays(t);
+    let tab = 'ideas', picked = new Set(), own = { emoji: '✈️', text: '', note: '', time: '' }, time = '';
+    const ideas = orderedCats().flatMap(c => (S.ideas[t.id] || []).filter(i => (i.cat || 'other') === c.id).sort((a, b) => (b.must ? 1 : 0) - (a.must ? 1 : 0) || a.name.localeCompare(b.name)));
+    const where = `Day ${days.indexOf(day) + 1} · ${dayLabel(day)}${slot ? ' · ' + SLOTS.find(([k]) => k === slot)[1] : ''}`;
+    const draw = () => {
+      openSheet(`<div class="sheet-head"><div><h2>Add to the plan</h2><p class="hint" style="margin:2px 0 0">${esc(where)}</p></div><button class="btn quiet" data-act="close">Cancel</button></div>
+        <div class="seg wide"><button class="${tab === 'ideas' ? 'on' : ''}" data-tab="ideas">From ideas</button><button class="${tab === 'own' ? 'on' : ''}" data-tab="own">Write your own</button></div>
+        ${tab === 'ideas' ? (ideas.length ? `<div class="pick-list">${ideas.map(i => {
+            const on = plannedDays(t, i.id);
+            return `<label class="pick ${picked.has(i.id) ? 'on' : ''}"><input type="checkbox" data-pick="${esc(i.id)}" ${picked.has(i.id) ? 'checked' : ''}>
+              ${i.photo ? `<img src="${esc(i.photo)}" alt="">` : `<span class="pick-emoji">${catOf(i.cat).emoji}</span>`}
+              <span class="pick-main"><b>${esc(i.name)}${i.must ? ' 💖' : ''}</b>${on.length ? `<small>Already on day${on.length > 1 ? 's' : ''} ${on.join(', ')}</small>` : ''}</span>
+              <span class="pick-box">${icon('check')}</span></label>`;
+          }).join('')}</div>` : '<p class="empty small">No ideas on this trip yet — write your own instead.</p>')
+        : `<div class="emoji-pick">${STOP_EMOJI.map(x => `<button type="button" class="${own.emoji === x ? 'on' : ''}" data-semo="${x}">${x}</button>`).join('')}</div>
+          <div class="field"><input class="input" id="s-text" value="${esc(own.text)}" placeholder="Flight lands, check in, rest day…" aria-label="What"></div>
+          <div class="field"><input class="input" id="s-note" value="${esc(own.note)}" placeholder="Note (optional) — flight number, confirmation…" aria-label="Note"></div>`}
+        ${style === 'times' ? `<div class="field tight"><label for="s-time">Time (optional)</label><input class="input" type="time" id="s-time" value="${esc(tab === 'own' ? own.time : time)}"></div>` : ''}
+        <div class="sheet-foot"><button class="btn wide" id="s-add">${tab === 'ideas' ? (picked.size ? `Add ${picked.size} to the plan` : 'Pick ideas to add') : 'Add to the plan'}</button></div>`, onClick);
+      sheet.onchange = e => {
+        const id = e.target.dataset.pick;
+        if (id === undefined) return;
+        if (e.target.checked) picked.add(id); else picked.delete(id);
+        // update in place so the list doesn't jump back to the top
+        e.target.closest('.pick').classList.toggle('on', e.target.checked);
+        $('#s-add').textContent = picked.size ? `Add ${picked.size} to the plan` : 'Pick ideas to add';
+      };
+    };
+    const grab = () => {
+      if ($('#s-time')) { if (tab === 'own') own.time = $('#s-time').value; else time = $('#s-time').value; }
+      if ($('#s-text')) { own.text = $('#s-text').value; own.note = $('#s-note').value; }
+    };
+    async function onClick(e) {
+      const tb = e.target.closest('[data-tab]');
+      if (tb) { grab(); tab = tb.dataset.tab; draw(); return; }
+      const em = e.target.closest('[data-semo]');
+      if (em) { grab(); own.emoji = em.dataset.semo; draw(); return; }
+      if (!e.target.closest('#s-add')) return;
+      grab();
+      const same = (S.plan[t.id] || []).filter(p => p.day === day && (style !== 'slots' || (p.slot || '') === slot));
+      let order = same.reduce((a, p) => Math.max(a, (p.order || 0) + 1), 0);
+      const base = { day, slot: slot || '', time: '' };
+      let add;
+      if (tab === 'ideas') {
+        if (!picked.size) return toast('Tick the ideas you want on this day.');
+        add = ideas.filter(i => picked.has(i.id)).map(i => ({ ...base, idea: i.id, time: time || '', order: order++ }));
+      } else {
+        if (!own.text.trim()) { $('#s-text').focus(); return toast('Write what it is.'); }
+        add = [{ ...base, text: own.text.trim(), emoji: own.emoji, note: own.note.trim(), time: own.time || '', order }];
+      }
+      e.target.disabled = true;
+      try { await API.addPlan(t.id, add); closeSheet(); toast('Added to the plan ✨'); } catch (err) { e.target.disabled = false; oops(err); }
+    }
+    draw();
+  }
+
+  // One stop: move it, give it a time, add a note, or take it off the plan.
+  function stopSheet(t, p) {
+    if (!p) return;
+    const style = t.planStyle || 'loose';
+    const edit = canEdit(t);
+    const days = tripDays(t);
+    const i = stopIdea(t, p);
+    const d = { day: p.day, slot: p.slot || '', time: p.time || '', note: p.note || '', text: p.text || '', emoji: p.emoji || '📝' };
+    const draw = () => {
+      openSheet(`<div class="sheet-head"><h2>${esc(i ? i.name : d.text || 'Stop')}</h2><button class="btn quiet" data-act="close">${edit ? 'Cancel' : 'Close'}</button></div>
+        ${i ? `<button class="stop-open" id="st-open">${i.photo ? `<img src="${esc(i.photo)}" alt="">` : `<span class="pick-emoji">${catOf(i.cat).emoji}</span>`}<span><b>${esc(i.name)}</b><small>Open the idea ›</small></span></button>` : ''}
+        ${edit ? `${!i ? `<div class="emoji-pick">${STOP_EMOJI.map(x => `<button type="button" class="${d.emoji === x ? 'on' : ''}" data-semo="${x}">${x}</button>`).join('')}</div>
+            <div class="field"><label for="st-text">What</label><input class="input" id="st-text" value="${esc(d.text)}"></div>` : ''}
+          <div class="field tight"><label for="st-day">Day</label><select class="input" id="st-day">${days.map((x, n) => `<option value="${x}" ${x === d.day ? 'selected' : ''}>Day ${n + 1} · ${esc(dayLabel(x))}</option>`).join('')}${days.includes(d.day) ? '' : '<option value="" selected>Pick a day</option>'}</select></div>
+          ${style === 'slots' ? `<div class="field"><div class="label">Time of day</div><div class="seg wide">${[['', 'Anytime'], ...SLOTS].map(([k, l]) => `<button class="${d.slot === k ? 'on' : ''}" data-slot="${k}">${l}</button>`).join('')}</div></div>` : ''}
+          ${style === 'times' ? `<div class="field"><label for="st-time">Time</label><div class="row"><input class="input" type="time" id="st-time" value="${esc(d.time)}">${d.time ? '<button class="btn quiet small" id="st-notime">No time</button>' : ''}</div></div>` : ''}
+          <div class="field"><label for="st-note">Note</label><input class="input" id="st-note" value="${esc(d.note)}" placeholder="Reservation, confirmation number…"></div>
+          <div class="sheet-foot"><button class="btn wide" id="st-save">Save</button><button class="btn danger" id="st-del">Take off the plan</button></div>`
+        : `<p class="hint">Day ${days.indexOf(p.day) + 1} · ${esc(dayLabel(p.day))}${p.time ? ' · ' + esc(timeLabel(p.time)) : ''}${p.slot && style === 'slots' ? ' · ' + esc(SLOTS.find(([k]) => k === p.slot)[1]) : ''}</p>${p.note ? `<p class="detail-notes">${esc(p.note)}</p>` : ''}`}`, onClick);
+    };
+    const grab = () => {
+      if (!edit) return;
+      d.day = $('#st-day').value; d.note = $('#st-note').value;
+      if ($('#st-time')) d.time = $('#st-time').value;
+      if ($('#st-text')) d.text = $('#st-text').value;
+    };
+    async function onClick(e) {
+      if (e.target.closest('#st-open')) { ideaDetail(t, i); return; }
+      const sl = e.target.closest('[data-slot]');
+      if (sl) { grab(); d.slot = sl.dataset.slot; draw(); return; }
+      const em = e.target.closest('[data-semo]');
+      if (em) { grab(); d.emoji = em.dataset.semo; draw(); return; }
+      if (e.target.closest('#st-notime')) { grab(); d.time = ''; draw(); return; }
+      if (e.target.closest('#st-del')) {
+        try { await API.deletePlan(t.id, p.id); closeSheet(); toast('Taken off the plan'); } catch (err) { oops(err); }
+        return;
+      }
+      if (e.target.closest('#st-save')) {
+        grab();
+        if (!d.day) return toast('Pick a day.');
+        if (!i && !d.text.trim()) return toast('Write what it is.');
+        const out = { id: p.id, day: d.day, time: d.time || '', note: d.note.trim() };
+        if (style === 'slots') out.slot = d.slot;
+        if (!i) { out.text = d.text.trim(); out.emoji = d.emoji; }
+        // a new day: go to the end of that day's list
+        if (d.day !== p.day) out.order = (S.plan[t.id] || []).filter(x => x.day === d.day).reduce((a, x) => Math.max(a, (x.order || 0) + 1), 0);
+        e.target.disabled = true;
+        try { await API.savePlan(t.id, out); closeSheet(); toast('Saved'); } catch (err) { e.target.disabled = false; oops(err); }
+      }
+    }
+    draw();
+  }
+
+  function planStyleSheet(t) {
+    const draw = () => {
+      t = tripById(t.id);
+      const cur = t.planStyle || 'loose';
+      openSheet(`<div class="sheet-head"><h2>Plan style</h2><button class="btn quiet" data-act="close">Done</button></div>
+        <p class="hint" style="margin-top:-6px">How this trip’s day-by-day plan works. You can switch anytime — nothing you’ve planned is lost.</p>
+        <div class="menu tight">${Object.entries(PLAN_STYLES).map(([k, v]) => `<button data-ps="${k}" class="${cur === k ? 'open' : ''}">${cur === k ? icon('check') : '<span class="icon"></span>'} ${esc(v.name)}<span class="menu-sub">${esc(v.desc)}</span></button>`).join('')}</div>`, async e => {
+        const b = e.target.closest('[data-ps]');
+        if (!b) return;
+        try { await API.saveTrip(t.id, { planStyle: b.dataset.ps }); setTimeout(draw, 80); } catch (err) { oops(err); }
+      });
+    };
+    draw();
+  }
+
+  // the "which day" picker that floats on the trip map
+  function dayPicker(t) {
+    const days = tripDays(t);
+    const used = new Set((S.plan[t.id] || []).filter(p => p.idea).map(p => p.day));
+    if (!used.size) return '';
+    return `<label class="map-day">${icon('calendar')}<select id="map-day" aria-label="Show a day">
+      <option value="">All days</option>${days.filter(d => used.has(d)).map(d => `<option value="${d}" ${ui.day === d ? 'selected' : ''}>Day ${days.indexOf(d) + 1} · ${esc(dayLabel(d))}</option>`).join('')}</select></label>`;
+  }
+
   // ---------- people + invites ----------
   function inviteLink(t) { return location.origin + location.pathname + '#/join/' + encodeURIComponent(t.code); }
   function inviteSheet(t) {
@@ -1009,6 +1282,7 @@
       <div class="menu">
         <button data-m="invite">${icon('share')} Invite friends</button>
         ${edit ? `<button data-m="details">${icon('edit')} Trip name, place, dates & photo</button>` : ''}
+        ${edit && t.start ? `<button data-m="plan">${icon('calendar')} Plan style <span class="menu-sub">${esc(PLAN_STYLES[t.planStyle || 'loose'].name)}</span></button>` : ''}
         ${edit ? `<button data-m="pins">${icon('pin')} Map pins <span class="menu-sub">The pin each kind of idea gets</span></button>` : ''}
         <button data-m="look">${icon('palette')} Trip look ${t.look ? `<span class="menu-sub">${keep ? 'Using my own' : 'Shared look on'}</span>` : '<span class="menu-sub">None — everyone sees their own</span>'}</button>
         <button data-m="people">${icon('person-plus')} Who’s going</button>
@@ -1021,6 +1295,7 @@
       else if (k === 'details') tripSheet(t);
       else if (k === 'look') tripLookSheet(t);
       else if (k === 'pins') pinDefaultsSheet(t);
+      else if (k === 'plan') planStyleSheet(t);
       else if (k === 'people') peopleSheet(t);
       else if (k === 'leave') {
         if (!(await ask('Leave this trip?', 'You won’t see it anymore unless someone invites you again.', 'Leave', { danger: true }))) return;
